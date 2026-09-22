@@ -200,7 +200,7 @@ textarea{min-height:140px;font-family:ui-monospace,Menlo,Consolas,monospace;font
  * © 2026 Шандриков Руслан Владимирович (Telegram @rushandrikov). Все права защищены.
  * Копирование, изменение и распространение кода без письменного разрешения автора запрещены.
  */
-const APP_VERSION = '1.8 · 22.09.2026';
+const APP_VERSION = '1.8.1 · 22.09.2026';
 // Тестовый режим: включается флагом в тестовой сборке ИЛИ автоматически, если адрес страницы
 // содержит «test» (например .../finance-test/). Вторая проверка страхует от случая, когда
 // в тестовый репозиторий по ошибке загрузили рабочий файл: данные всё равно останутся раздельными.
@@ -1054,13 +1054,24 @@ async function copyPlan() {
 /* ---------- Данные ---------- */
 const backupName = () => 'tochka-b-' + today() + '.json';
 function openExport() {
-  const viaBot = famAvail();
+  const inTg = !!(tg && tg.initData), viaBot = famAvail();
+  // В Telegram обычное скачивание файла недоступно: встроенный браузер вместо сохранения
+  // предлагает «перейти по ссылке». Поэтому там файл отправляется сообщением от бота.
+  const btns = inTg
+    ? (viaBot
+        ? `<button class="btn" data-act="exp-send">Отправить файл в чат с ботом</button>`
+        : `<button class="btn" data-act="exp-text">Показать данные текстом</button>`)
+    : `<button class="btn" data-act="exp-download">Сохранить файл на устройство</button>`;
+  const note = inTg
+    ? (viaBot
+        ? 'Файл придёт сообщением от бота. Чтобы сохранить его на устройство, нажмите на файл в чате и выберите «Сохранить в файлы».'
+        : 'Сохранение файлом недоступно: не подключён сервер. Скопируйте текст и сохраните его, например в «Избранном».')
+    : 'Файл сохранится в папку загрузок этого компьютера.';
   openSheet('exp', `<div class="stitle">Резервная копия</div>
-    <div class="sub" style="margin:-6px 2px 16px">Файл со всеми счетами, операциями, планами и настройками. Из него можно восстановить данные в любой момент.</div>
-    ${viaBot ? '<button class="btn" data-act="exp-send">Отправить файл в чат с ботом</button>' : ''}
-    <button class="btn ${viaBot ? 'ghost' : ''}" data-act="exp-download">Сохранить файл на устройство</button>
+    <div class="sub" style="margin:-6px 2px 16px">Копия всех счетов, операций, планов и настроек. Из неё можно восстановить данные в любой момент.</div>
+    ${btns}
     <button class="btn ghost" data-act="sheet-close">Закрыть</button>
-    <div class="foot">${viaBot ? 'Файл придёт сообщением от бота – его можно оставить в чате или сохранить куда угодно. ' : ''}Восстановление: Настройки → Данные → Импорт из файла.<br><button class="link" style="display:inline;width:auto;padding:0" data-act="exp-text">Показать данные текстом</button></div>`);
+    <div class="foot">${note}<br>Восстановление: Настройки → Данные → Восстановить из копии.${inTg && viaBot ? '<br><button class="link" style="display:inline;width:auto;padding:0" data-act="exp-text">Показать данные текстом</button>' : ''}</div>`);
 }
 function openExportText() {
   openSheet('exp', `<div class="stitle">Данные текстом</div>
