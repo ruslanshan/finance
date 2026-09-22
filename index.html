@@ -308,28 +308,45 @@ function cloudSave() {
     });
   });
 }
+// Защита данных при синхронизации:
+// • на устройстве, которое ещё ни разу не синхронизировалось, облако Telegram всегда главнее локальных данных;
+// • пока облако не прочитано успешно, ничего в него не записывается;
+// • перед заменой локальных данных с операциями делается резервная копия на устройстве.
+const LINK = 'finapp_cloud_linked', BACKUP = 'finapp_backup';
+let cloudTries = 0;
 function cloudLoad() {
-  if (!CS) return;
-  const done = () => { cloudReady = true; if (cloudPending) { cloudPending = false; scheduleCloud(); } };
+  if (!CS) { cloudChecked(); return; }
+  const linked = localStorage.getItem(LINK) === '1';
+  const done = () => {
+    cloudReady = true; try { localStorage.setItem(LINK, '1'); } catch (x) {}
+    if (cloudPending) { cloudPending = false; scheduleCloud(); }
+    cloudChecked();
+  };
+  const fail = () => { if (++cloudTries < 4) setTimeout(cloudLoad, 4000); cloudChecked(); };
   CS.getItem('c_meta', (e, m) => {
+    if (e) return fail();
     let meta = null; try { meta = m ? JSON.parse(m) : null; } catch (x) {}
-    if (e || !meta || !meta.n) { if (S.updated) cloudPending = true; return done(); }
-    if (meta.updated <= S.updated) { if (meta.updated < S.updated) cloudPending = true; return done(); }
+    if (!meta || !meta.n) { if (S.updated) cloudPending = true; return done(); }
+    if (linked && meta.updated <= S.updated) { if (meta.updated < S.updated) cloudPending = true; return done(); }
     const keys = []; for (let i = 0; i < meta.n; i++) keys.push('c_' + i);
     CS.getItems(keys, (e2, vals) => {
-      try {
-        if (!e2 && vals) {
-          const d = JSON.parse(keys.map(k => vals[k] || '').join(''));
-          if (d && Array.isArray(d.accounts)) {
-            S = normalize(d); localStorage.setItem(KEY, ser()); recompute();
-            if (UI.sheet === 'onb' && S.onb) closeSheet(true);
-            render(); toast('Данные загружены из облака Telegram');
-          }
-        }
-      } catch (x) {}
+      let d = null;
+      try { if (!e2 && vals) d = JSON.parse(keys.map(k => vals[k] || '').join('')); } catch (x) {}
+      if (!d || !Array.isArray(d.accounts)) return fail();
+      if (S.tx.length && ser() !== JSON.stringify(d)) { try { localStorage.setItem(BACKUP, JSON.stringify({ at: Date.now(), data: JSON.parse(ser()) })); } catch (x) {} }
+      S = normalize(d); cloudPending = false;
+      try { localStorage.setItem(KEY, ser()); } catch (x) {}
+      recompute();
+      if (UI.sheet === 'onb' && S.onb) closeSheet(true);
+      render(); toast('Данные загружены из облака Telegram');
       done();
     });
   });
+}
+let cloudCheckedOnce = false;
+function cloudChecked() {
+  if (cloudCheckedOnce) return; cloudCheckedOnce = true;
+  if (!S.onb && UI.sheet !== 'onb') openOnboarding();
 }
 
 /* ================= Балансы ================= */
@@ -526,8 +543,12 @@ V.home = {
     }]);
     let rates = '';
     if (multiCur()) rates = RS.latest ? `Курсы валют на ${fmtDate(RS.latest)}` : RS.loading ? 'Загружаю курсы валют…' : 'Курсы валют не загружены — проверьте интернет и обновите в настройках';
+    const outside = !(tg && tg.initData), oldTg = !outside && !CS;
+    const note = outside ? `<div class="warn"><b>Открыто вне Telegram.</b> Здесь данные хранятся только в этом браузере и не синхронизируются с Telegram. Чтобы работать со своими данными на компьютере, откройте бота в <a href="https://web.telegram.org/" target="_blank" rel="noopener" style="color:inherit">Telegram Web</a> или в Telegram Desktop.</div>`
+      : oldTg ? '<div class="warn">Обновите Telegram — в этой версии не работает синхронизация между устройствами.</div>' : '';
     return `
       <div class="hdr"><div class="title">Обзор</div><button class="iconbtn" data-act="tab" data-tab="settings" aria-label="Настройки"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button></div>
+      ${note}
       <div class="hero">
         <div class="lbl">Капитал</div>
         <div class="net num">${fmt(cap.net, B())}</div>
@@ -677,7 +698,7 @@ V.settings = {
       <div class="card">${rateRows || '<div class="empty">Все счета в валюте отчётов — пересчёт не нужен</div>'}<button class="link" data-act="rates-refresh">${RS.loading ? 'Обновляю…' : 'Обновить курсы'}</button></div>
       <div class="foot">${RS.latest ? 'Последние курсы: ' + fmtDate(RS.latest) + '. ' : ''}Ежедневные курсы загружаются автоматически для каждой даты с операциями (история доступна с марта 2024).</div>
       <div class="h1">Данные</div>
-      <div class="card"><button class="link" data-act="export">Экспорт в JSON</button><button class="link" data-act="import">Импорт из JSON</button><button class="link" data-act="reset" style="color:var(--exp)">Удалить все данные</button></div>
+      <div class="card"><button class="link" data-act="export">Экспорт в JSON</button><button class="link" data-act="import">Импорт из JSON</button>${backupInfo() ? `<button class="link" data-act="restore-backup">Восстановить копию с устройства от ${backupInfo()}</button>` : ''}<button class="link" data-act="reset" style="color:var(--exp)">Удалить все данные</button></div>
       <div class="foot">${CS ? 'Данные хранятся на устройстве и синхронизируются через облако Telegram.' : 'Данные хранятся на этом устройстве. Сделайте экспорт, чтобы не потерять их.'} Операций: ${S.tx.length}.</div>`;
   }
 };
@@ -1244,10 +1265,21 @@ Object.assign(ACT, {
   }
 });
 document.addEventListener('change', e => { const el = e.target, d = el.dataset; if (el.type !== 'checkbox') return; if (d.af && AF) AF[d.af] = el.checked; if (d.cf && CF) CF[d.cf] = el.checked; });
+
+function backupInfo() { try { const b = JSON.parse(localStorage.getItem(BACKUP)); return b && b.at ? new Date(b.at).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) : ''; } catch (e) { return ''; } }
+ACT['restore-backup'] = async () => {
+  let b; try { b = JSON.parse(localStorage.getItem(BACKUP)); } catch (e) {}
+  if (!b || !b.data) return toast('Резервной копии нет');
+  if (!(await ask('Заменить текущие данные копией с этого устройства? Текущие данные сохранятся как новая резервная копия.'))) return;
+  const cur = JSON.parse(ser());
+  S = normalize(b.data); S.onb = true; persist();
+  try { localStorage.setItem(BACKUP, JSON.stringify({ at: Date.now(), data: cur })); } catch (e) {}
+  toast('Копия восстановлена'); render();
+};
 /* ================= Старт ================= */
 themeColors(); recompute(); render();
-if (!S.onb) openOnboarding();
 cloudLoad();
+if (CS && !S.onb) setTimeout(() => { if (!S.onb) cloudChecked(); }, 6000);
 loadLatest().then(ok => { if (ok || !RK.length) render(); });
 
 </script>
