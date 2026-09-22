@@ -200,7 +200,9 @@ textarea{min-height:140px;font-family:ui-monospace,Menlo,Consolas,monospace;font
  * © 2026 Шандриков Руслан Владимирович (Telegram @rushandrikov). Все права защищены.
  * Копирование, изменение и распространение кода без письменного разрешения автора запрещены.
  */
-const APP_VERSION = '1.7.1 · 22.09.2026';
+const APP_VERSION = '1.7.2 · 22.09.2026';
+// ▼ В тестовой копии приложения здесь стоит true: появляется красная пометка «ТЕСТ» ▼
+const TEST_MODE = false;
 // ▼▼▼ Автор и контакт – показываются в разделе «О приложении» и в политике конфиденциальности ▼▼▼
 const AUTHOR_NAME = 'Шандриков Руслан Владимирович';
 const AUTHOR_CONTACT = 'Telegram @rushandrikov';
@@ -266,7 +268,10 @@ function num(s) {
 }
 
 /* ================= Данные ================= */
-const KEY = 'finapp_data_v1', RKEY = 'finapp_rates_v1';
+// Тестовая копия приложения хранит всё под своими ключами, поэтому её данные и действия
+// (в том числе «Удалить все данные») никак не затрагивают рабочее приложение на том же устройстве.
+const SFX = TEST_MODE ? '_test' : '';
+const KEY = 'finapp_data_v1' + SFX, RKEY = 'finapp_rates_v1' + SFX;
 function defaults() {
   const acc = (name, icon, type) => ({ id: uid(), name, icon, type, cur: 'USD', init: 0 });
   const cat = (kind, icon, name) => ({ id: uid(), name, icon, kind });
@@ -364,14 +369,15 @@ function mergeStates(L, R) {
      данные сначала сливаются по записям, и только потом сохраняются. Ничьи правки не затираются. */
 const CS = TGV('6.9') ? tg.CloudStorage : null;
 const CHUNK = 3800;
-const LINK = 'finapp_cloud_linked', BACKUP = 'finapp_backup', SEEN = 'finapp_cloud_seen';
+const LINK = 'finapp_cloud_linked' + SFX, BACKUP = 'finapp_backup' + SFX, SEEN = 'finapp_cloud_seen' + SFX;
+const CK = TEST_MODE ? 't_' : 'c_'; // ключи в облаке Telegram: у тестовой копии свои
 let cloudReady = !CS, cloudPending = false, cloudTimer = null, cloudBusy = false, cloudAgain = false, cloudTries = 0;
 let cloudSeen = +(localStorage.getItem(SEEN) || 0);
 const setSeen = v => { cloudSeen = v; try { localStorage.setItem(SEEN, String(v)); } catch (e) {} };
 function scheduleCloud() { if (!CS) return; if (!cloudReady) { cloudPending = true; return; } clearTimeout(cloudTimer); cloudTimer = setTimeout(cloudSave, 1200); }
-function readMeta(cb) { CS.getItem('c_meta', (e, m) => { if (e) return cb(null, true); let meta = null; try { meta = m ? JSON.parse(m) : null; } catch (x) {} cb(meta, false); }); }
+function readMeta(cb) { CS.getItem(CK + 'meta', (e, m) => { if (e) return cb(null, true); let meta = null; try { meta = m ? JSON.parse(m) : null; } catch (x) {} cb(meta, false); }); }
 function readCloud(meta, cb) {
-  const keys = []; for (let i = 0; i < meta.n; i++) keys.push('c_' + i);
+  const keys = []; for (let i = 0; i < meta.n; i++) keys.push(CK + i);
   CS.getItems(keys, (e, vals) => {
     let d = null;
     try { if (!e && vals) d = JSON.parse(keys.map(k => vals[k] || '').join('')); } catch (x) {}
@@ -396,13 +402,13 @@ function cloudSave() {
       const str = ser(), n = Math.ceil(str.length / CHUNK), old = meta ? meta.n || 0 : 0;
       if (n > 1000) { toast('Данных слишком много для облака Telegram'); return cloudDone(); }
       let left = n, failed = false; const upd = S.updated;
-      for (let i = 0; i < n; i++) CS.setItem('c_' + i, str.slice(i * CHUNK, (i + 1) * CHUNK), e => {
+      for (let i = 0; i < n; i++) CS.setItem(CK + i, str.slice(i * CHUNK, (i + 1) * CHUNK), e => {
         if (e) failed = true;
         if (--left) return;
         if (failed) return cloudDone();
-        CS.setItem('c_meta', JSON.stringify({ n, updated: upd }), () => {
+        CS.setItem(CK + 'meta', JSON.stringify({ n, updated: upd }), () => {
           setSeen(upd);
-          const extra = []; for (let j = n; j < old; j++) extra.push('c_' + j);
+          const extra = []; for (let j = n; j < old; j++) extra.push(CK + j);
           if (extra.length) CS.removeItems(extra);
           cloudDone();
         });
@@ -656,11 +662,12 @@ V.home = {
     let rates = '';
     if (multiCur()) rates = RS.latest ? `Курсы валют на ${fmtDate(RS.latest)}` : RS.loading ? 'Загружаю курсы валют…' : 'Курсы валют не загружены – проверьте интернет и обновите в настройках';
     const outside = !(tg && tg.initData), oldTg = !outside && !CS;
+    const testNote = TEST_MODE ? '<div class="warn">Это тестовая копия. Её данные хранятся отдельно от рабочего приложения: что угодно здесь можно удалять и ломать.</div>' : '';
     const note = outside ? `<div class="warn"><b>Открыто вне Telegram.</b> Здесь данные хранятся только в этом браузере и не синхронизируются с Telegram. Чтобы работать со своими данными на компьютере, откройте бота в <a href="https://web.telegram.org/" target="_blank" rel="noopener" style="color:inherit">Telegram Web</a> или в Telegram Desktop.</div>`
       : oldTg ? '<div class="warn">Обновите Telegram – в этой версии не работает синхронизация между устройствами.</div>' : '';
     return `
-      <div class="hdr"><div class="title">Обзор</div><button class="iconbtn" data-act="tab" data-tab="settings" aria-label="Настройки"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button></div>
-      ${note}
+      <div class="hdr"><div class="title">Обзор${TEST_MODE ? ' <span class="badge" style="background:var(--exp);color:#fff">ТЕСТ</span>' : ''}</div><button class="iconbtn" data-act="tab" data-tab="settings" aria-label="Настройки"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button></div>
+      ${testNote}${note}
       <div class="hero">
         <div class="lbl">Капитал</div>
         <div class="net num">${fmt(cap.net, B())}</div>
@@ -815,7 +822,7 @@ V.settings = {
       <div class="foot">${CS ? 'Данные хранятся на устройстве и синхронизируются через облако Telegram.' : 'Данные хранятся на этом устройстве. Сделайте экспорт, чтобы не потерять их.'} Операций: ${S.tx.length}.</div>
       <div class="h1">О приложении</div>
       <div class="card"><button class="link" data-act="show-policy">Политика конфиденциальности</button><button class="link" data-act="tab" data-tab="about">О приложении и авторские права</button></div>
-      <div class="foot">«Точка Б» · версия ${APP_VERSION}<br>© 2026 ${esc(AUTHOR_NAME)}. Все права защищены.</div>`;
+      <div class="foot">«Точка Б» · версия ${APP_VERSION}${TEST_MODE ? ' · ТЕСТОВАЯ СРЕДА' : ''}<br>© 2026 ${esc(AUTHOR_NAME)}. Все права защищены.</div>`;
   }
 };
 
