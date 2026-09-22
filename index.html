@@ -200,7 +200,7 @@ textarea{min-height:140px;font-family:ui-monospace,Menlo,Consolas,monospace;font
  * © 2026 Шандриков Руслан Владимирович (Telegram @rushandrikov). Все права защищены.
  * Копирование, изменение и распространение кода без письменного разрешения автора запрещены.
  */
-const APP_VERSION = '1.7.4 · 22.09.2026';
+const APP_VERSION = '1.8 · 22.09.2026';
 // Тестовый режим: включается флагом в тестовой сборке ИЛИ автоматически, если адрес страницы
 // содержит «test» (например .../finance-test/). Вторая проверка страхует от случая, когда
 // в тестовый репозиторий по ошибке загрузили рабочий файл: данные всё равно останутся раздельными.
@@ -821,7 +821,7 @@ V.settings = {
       <div class="card">${rateRows || '<div class="empty">Все счета в валюте отчётов – пересчёт не нужен</div>'}<button class="link" data-act="rates-refresh">${RS.loading ? 'Обновляю…' : 'Обновить курсы'}</button></div>
       <div class="foot">${RS.latest ? 'Последние курсы: ' + fmtDate(RS.latest) + '. ' : ''}Ежедневные курсы загружаются автоматически для каждой даты с операциями (история доступна с марта 2024).</div>
       <div class="h1">Данные</div>
-      <div class="card"><button class="link" data-act="export">Экспорт в JSON</button><button class="link" data-act="import">Импорт из JSON</button>${backupInfo() ? `<button class="link" data-act="restore-backup">Восстановить копию с устройства от ${backupInfo()}</button>` : ''}<button class="link" data-act="reset" style="color:var(--exp)">Удалить все данные</button></div>
+      <div class="card"><button class="link" data-act="export">Сохранить копию данных</button><button class="link" data-act="import">Восстановить из копии</button>${backupInfo() ? `<button class="link" data-act="restore-backup">Восстановить копию с устройства от ${backupInfo()}</button>` : ''}<button class="link" data-act="reset" style="color:var(--exp)">Удалить все данные</button></div>
       <div class="foot">${CS ? 'Данные хранятся на устройстве и синхронизируются через облако Telegram.' : 'Данные хранятся на этом устройстве. Сделайте экспорт, чтобы не потерять их.'} Операций: ${S.tx.length}.</div>
       <div class="h1">О приложении</div>
       <div class="card"><button class="link" data-act="show-policy">Политика конфиденциальности</button><button class="link" data-act="tab" data-tab="about">О приложении и авторские права</button></div>
@@ -1052,17 +1052,70 @@ async function copyPlan() {
 }
 
 /* ---------- Данные ---------- */
+const backupName = () => 'tochka-b-' + today() + '.json';
 function openExport() {
-  const json = ser();
-  openSheet('exp', `<div class="stitle">Экспорт данных</div><textarea readonly id="expdata">${esc(json)}</textarea>
-    <button class="btn" data-act="copy-export" style="margin-top:12px">Скопировать</button>
-    <button class="btn ghost" data-act="dl-export">Скачать файл</button>
-    <div class="foot">Сохраните текст, например в «Избранном» Telegram. Длинный текст Telegram разобьёт на несколько сообщений – при восстановлении выделите их все и скопируйте вместе, приложение само их склеит. Восстановить: Настройки → Данные → Импорт.</div>`);
+  const viaBot = famAvail();
+  openSheet('exp', `<div class="stitle">Резервная копия</div>
+    <div class="sub" style="margin:-6px 2px 16px">Файл со всеми счетами, операциями, планами и настройками. Из него можно восстановить данные в любой момент.</div>
+    ${viaBot ? '<button class="btn" data-act="exp-send">Отправить файл в чат с ботом</button>' : ''}
+    <button class="btn ${viaBot ? 'ghost' : ''}" data-act="exp-download">Сохранить файл на устройство</button>
+    <button class="btn ghost" data-act="sheet-close">Закрыть</button>
+    <div class="foot">${viaBot ? 'Файл придёт сообщением от бота – его можно оставить в чате или сохранить куда угодно. ' : ''}Восстановление: Настройки → Данные → Импорт из файла.<br><button class="link" style="display:inline;width:auto;padding:0" data-act="exp-text">Показать данные текстом</button></div>`);
+}
+function openExportText() {
+  openSheet('exp', `<div class="stitle">Данные текстом</div>
+    <div class="sub" style="margin:-6px 2px 12px">Запасной способ: скопируйте текст и сохраните его, например в «Избранном».</div>
+    <button class="btn" data-act="copy-export">Скопировать</button>
+    <button class="btn ghost" data-act="sheet-close">Закрыть</button>
+    <textarea readonly id="expdata" style="margin-top:12px">${esc(ser())}</textarea>`);
 }
 function openImport() {
-  openSheet('imp', `<div class="stitle">Импорт данных</div><textarea id="impdata" placeholder="Вставьте сюда JSON из экспорта"></textarea>
+  openSheet('imp', `<div class="stitle">Восстановление из копии</div>
+    <div class="sub" style="margin:-6px 2px 16px">Выберите файл резервной копии. Текущие данные будут заменены данными из файла.</div>
+    <input type="file" id="impfile" accept="application/json,.json,text/plain" style="position:absolute;left:-9999px">
+    <button class="btn" data-act="imp-file">Выбрать файл</button>
+    <button class="btn ghost" data-act="sheet-close">Закрыть</button>
+    <div class="foot">Если файл пришёл от бота, сначала сохраните его на устройство: нажмите на файл в чате и выберите «Сохранить в файлы».<br><button class="link" style="display:inline;width:auto;padding:0" data-act="imp-text">Вставить данные текстом</button></div>`);
+}
+function openImportText() {
+  openSheet('imp', `<div class="stitle">Данные текстом</div>
+    <textarea id="impdata" placeholder="Вставьте сюда текст копии"></textarea>
     <button class="btn" data-act="import-do" style="margin-top:12px">Загрузить</button>
+    <button class="btn ghost" data-act="sheet-close">Закрыть</button>
     <div class="foot">Текущие данные будут заменены.</div>`);
+}
+function downloadBackup() {
+  try {
+    const url = URL.createObjectURL(new Blob(['\ufeff' + ser()], { type: 'application/json;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = backupName(); a.rel = 'noopener';
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 2000);
+    toast('Файл сохранён');
+  } catch (e) { toast('Не удалось сохранить файл, попробуйте «Показать данные текстом»'); }
+}
+async function sendBackupToChat(btn) {
+  if (btn) btn.textContent = 'Отправляю…';
+  try {
+    await api('/backup', { name: backupName(), data: ser() });
+    closeSheet(true); toast('Файл отправлен в чат с ботом');
+  } catch (e) {
+    if (btn) btn.textContent = 'Отправить файл в чат с ботом';
+    toast(famErrText(e.message));
+  }
+}
+async function applyBackup(d) {
+  if (!d || !Array.isArray(d.accounts) || !Array.isArray(d.tx)) return toast('Это не копия данных «Точки Б»');
+  if (!(await ask(`В копии: счетов ${d.accounts.length}, операций ${d.tx.length}. Сейчас в приложении операций ${S.tx.length}. Заменить текущие данные копией?`))) return;
+  S = normalize(d); S.onb = true; persist(); closeSheet(true); toast('Данные восстановлены'); render();
+}
+function readBackupFile(file) {
+  if (!file) return;
+  if (file.size > 12e6) return toast('Файл слишком большой');
+  const r = new FileReader();
+  r.onload = () => { const res = parseBackup(String(r.result || '')); if (res.err) return toast(res.err); applyBackup(res.d); };
+  r.onerror = () => toast('Не удалось прочитать файл');
+  r.readAsText(file, 'utf-8');
 }
 // Чинит текст, испорченный при пересылке через Telegram: разбивка на несколько сообщений,
 // заголовки «Имя, [22.09.2026 15:40]», переносы строк, «умные» кавычки.
@@ -1082,13 +1135,10 @@ function parseBackup(raw) {
   if (!/"diagHist"|"plans"/.test(body.slice(-2000))) return { err: 'Нет конца экспорта – похоже, скопирована только часть текста' };
   return { err: 'Текст повреждён. Если Telegram разбил его на несколько сообщений, выделите их все и скопируйте вместе' };
 }
-async function doImport() {
+function doImport() {
   const r = parseBackup($('#impdata').value);
   if (r.err) return toast(r.err);
-  const d = r.d;
-  if (!d || !Array.isArray(d.accounts) || !Array.isArray(d.tx)) return toast('Это не экспорт этого приложения');
-  if (!(await ask(`В копии: счетов ${d.accounts.length}, операций ${d.tx.length}. Сейчас в приложении операций ${S.tx.length}. Заменить текущие данные копией?`))) return;
-  S = normalize(d); S.onb = true; persist(); closeSheet(true); toast('Данные загружены'); render();
+  applyBackup(r.d);
 }
 function openOnboarding() {
   openSheet('onb', `<div class="stitle">Учёт личных финансов</div>
@@ -1123,8 +1173,10 @@ const ACT = {
   'pl-del': () => { delete S.plans[PF.mk][PF.cid]; persist(); closeSheet(true); toast('Убрано из плана'); render(); },
   'rates-refresh': async () => { RS.loading = true; draw(); const ok = await loadLatest(); FAILED.clear(); toast(ok ? 'Курсы обновлены' : 'Не удалось загрузить курсы'); render(); },
   'export': () => openExport(), 'import': () => openImport(), 'import-do': () => doImport(),
+  'exp-text': () => openExportText(), 'imp-text': () => openImportText(),
+  'exp-download': () => downloadBackup(), 'exp-send': el => sendBackupToChat(el),
+  'imp-file': () => { const el = $('#impfile'); if (el) el.click(); },
   'copy-export': async () => { const ta = $('#expdata'); try { await navigator.clipboard.writeText(ta.value); } catch (e) { ta.select(); document.execCommand('copy'); } toast('Скопировано'); },
-  'dl-export': () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([ser()], { type: 'application/json' })); a.download = 'finance-' + today() + '.json'; document.body.appendChild(a); a.click(); a.remove(); },
   'onb-done': () => { const c = $('#onbcur').value; S.base = c; S.accounts.forEach(a => { if (!hasTx(a.id)) a.cur = c; }); S.onb = true; persist(); closeSheet(true); render(); }
 };
 document.addEventListener('click', e => { const el = e.target.closest('[data-act]'); if (!el) return; const f = ACT[el.dataset.act]; if (f) { e.preventDefault(); f(el, e); } });
@@ -1138,6 +1190,7 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', e => {
   const el = e.target, d = el.dataset;
+  if (el.id === 'impfile') { readBackupFile(el.files && el.files[0]); return; }
   if (d.fs && F) { F[d.fs] = el.value || today(); if (d.fs === 'a' || d.fs === 'a2') { F.m2 = false; F.amt2 = ''; } setSheet(opHtml()); afterOpDraw(); if (F.t === 'tr') trAuto(true); }
   else if (d.af === 'cur' && AF) { AF.cur = el.value; setSheet(accHtml()); }
   else if (d.change === 'base') { S.base = el.value; persist(); toast('Валюта отчётов: ' + el.value); render(); }
@@ -1675,6 +1728,7 @@ const policyHtml = () => `<h2>1. Кто мы</h2>
 <li><b>В облачном хранилище Telegram (Telegram Cloud Storage)</b> – копия ваших данных для синхронизации между вашими устройствами. Хранилище привязано к вашему аккаунту Telegram и этому боту, прочитать его может только приложение, открытое из вашего аккаунта.</li>
 <li><b>На сервере семейного бюджета (Cloudflare)</b> – только если вы вступили в семью: общие семейные счета и операции по ним, идентификаторы и имена участников семьи. Личные счета и операции по ним на сервер не передаются. При переводе между личным и общим счётом на сервер попадают только сумма и сторона общего счёта – название и остаток личного счёта не передаются.</li>
 <li><b>На GitHub</b> хранится только программный код приложения, ваших данных там нет.</li>
+<li><b>Резервная копия.</b> Если вы нажимаете «Отправить файл в чат с ботом», файл с вашими данными проходит через сервер и сразу отправляется вам в личный чат с ботом. На сервере он не сохраняется. Кнопка «Сохранить файл на устройство» работает без сервера.</li>
 </ul>
 <p>Курсы валют загружаются из открытого источника через сети jsDelivr и Cloudflare. При этом передаётся только дата, никаких ваших данных.</p>
 <h2>4. Для чего используются данные</h2>
@@ -1696,7 +1750,7 @@ const policyHtml = () => `<h2>1. Кто мы</h2>
 <li>Секретный ключ бота хранится только на сервере и не содержится в коде приложения.</li>
 <li>Telegram и Cloudflare хранят данные в зашифрованном виде своими средствами. Сквозного (end-to-end) шифрования в приложении нет.</li>
 </ul>
-<p>Ни один способ хранения не даёт абсолютной защиты. Рекомендуем включить код-пароль в Telegram и время от времени делать резервную копию (Настройки → Данные → Экспорт в JSON).</p>
+<p>Ни один способ хранения не даёт абсолютной защиты. Рекомендуем включить код-пароль в Telegram и время от времени сохранять резервную копию (Настройки → Данные → Сохранить копию данных).</p>
 <h2>8. Сроки хранения и удаление</h2>
 <ul>
 <li>Данные на устройстве и в облаке Telegram хранятся, пока вы их не удалите. Кнопка «Удалить все данные» в настройках очищает данные на устройстве, в облаке Telegram и резервную копию, а если вы состоите в семье – выводит вас из неё.</li>
