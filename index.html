@@ -200,7 +200,7 @@ textarea{min-height:140px;font-family:ui-monospace,Menlo,Consolas,monospace;font
  * © 2026 Шандриков Руслан Владимирович (Telegram @rushandrikov). Все права защищены.
  * Копирование, изменение и распространение кода без письменного разрешения автора запрещены.
  */
-const APP_VERSION = '1.6.2 · 22.09.2026';
+const APP_VERSION = '1.7.1 · 22.09.2026';
 // ▼▼▼ Автор и контакт – показываются в разделе «О приложении» и в политике конфиденциальности ▼▼▼
 const AUTHOR_NAME = 'Шандриков Руслан Владимирович';
 const AUTHOR_CONTACT = 'Telegram @rushandrikov';
@@ -283,7 +283,7 @@ function defaults() {
   };
 }
 function loadLocal() { try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && Array.isArray(s.accounts)) return s; } catch (e) {} return null; }
-function normalize(s) { s.accounts = s.accounts || []; s.cats = s.cats || []; s.tx = s.tx || []; s.plans = s.plans || {}; s.base = s.base || 'USD'; return migrate(s); }
+function normalize(s) { s.accounts = s.accounts || []; s.cats = s.cats || []; s.tx = s.tx || []; s.plans = s.plans || {}; s.del = s.del || {}; s.base = s.base || 'USD'; return migrate(s); }
 // v2: отметки для метрик здоровья – обязательные расходы, платежи по долгам, пассивный доход, ликвидные счета
 function migrate(s) {
   if ((s.v || 1) >= 2) return s;
@@ -300,37 +300,130 @@ let S = normalize(loadLocal() || defaults());
 const ser = () => JSON.stringify(S, (k, v) => k.charAt(0) === '_' ? undefined : v);
 
 function persist() {
-  S.updated = Date.now();
-  try { localStorage.setItem(KEY, ser()); } catch (e) { toast('Не удалось сохранить на устройстве'); }
-  scheduleCloud(); recompute();
+  stamp(); S.updated = Date.now();
+  saveLocal(); scheduleCloud(); recompute();
+}
+function saveLocal() { try { localStorage.setItem(KEY, ser()); } catch (e) { toast('Не удалось сохранить на устройстве'); } }
+
+/* ---- Учёт изменений по записям (для слияния данных с разных устройств) ----
+   Каждая запись (счёт, статья, операция, план) получает метку времени u при изменении,
+   удалённые записи – отметку в S.del. Так при синхронизации побеждает более свежая правка
+   каждой записи, а не целиком состояние одного устройства. */
+const COLS = ['accounts', 'cats', 'tx'];
+const recKey = r => JSON.stringify(r, (k, v) => (k === 'u' || k.charAt(0) === '_') ? undefined : v);
+let SNAP = null;
+function snapOf(st) {
+  const m = {};
+  COLS.forEach(c => (st[c] || []).forEach(r => { m[c + ':' + r.id] = recKey(r); }));
+  Object.entries(st.plans || {}).forEach(([mk, o]) => Object.entries(o || {}).forEach(([cid, p]) => { m['p:' + mk + '|' + cid] = recKey(p); }));
+  return m;
+}
+function stamp() {
+  const now = Date.now(), cur = snapOf(S);
+  S.del = S.del || {};
+  if (SNAP) {
+    COLS.forEach(c => S[c].forEach(r => { if (SNAP[c + ':' + r.id] !== cur[c + ':' + r.id]) r.u = now; }));
+    Object.entries(S.plans).forEach(([mk, o]) => Object.entries(o || {}).forEach(([cid, p]) => { if (SNAP['p:' + mk + '|' + cid] !== cur['p:' + mk + '|' + cid]) p.u = now; }));
+    for (const k in SNAP) if (!(k in cur)) S.del[k] = now;
+  }
+  for (const k in cur) if (S.del[k]) delete S.del[k];
+  const old = now - 120 * 864e5; for (const k in S.del) if (S.del[k] < old) delete S.del[k];
+  SNAP = cur;
+}
+function contentKey(st) {
+  const m = snapOf(st);
+  return JSON.stringify([Object.keys(m).sort().map(k => [k, m[k]]), Object.keys(st.del || {}).sort(), st.base, !!st.onb, st.diag || null, st.fam ? st.fam.hid : null]);
+}
+function mergeStates(L, R) {
+  const newerR = (R.updated || 0) > (L.updated || 0);
+  const out = Object.assign({}, newerR ? R : L);
+  const del = Object.assign({}, R.del || {});
+  for (const k in (L.del || {})) del[k] = Math.max(del[k] || 0, L.del[k]);
+  const pick = (a, b) => !a ? b : !b ? a : (b.u || 0) > (a.u || 0) ? b : (a.u || 0) > (b.u || 0) ? a : newerR ? b : a;
+  COLS.forEach(c => {
+    const m = new Map();
+    (L[c] || []).forEach(r => m.set(r.id, r));
+    (R[c] || []).forEach(r => m.set(r.id, pick(m.get(r.id), r)));
+    out[c] = [...m.values()].filter(r => !((del[c + ':' + r.id] || 0) >= (r.u || 0) && del[c + ':' + r.id]));
+  });
+  const plans = {};
+  [L.plans, R.plans].forEach(src => Object.entries(src || {}).forEach(([mk, o]) => Object.entries(o || {}).forEach(([cid, p]) => {
+    if (del['p:' + mk + '|' + cid] && del['p:' + mk + '|' + cid] >= (p.u || 0)) return;
+    plans[mk] = plans[mk] || {}; plans[mk][cid] = pick(plans[mk][cid], p);
+  })));
+  out.plans = plans;
+  const ob = new Map(); [...(L.outbox || []), ...(R.outbox || [])].forEach(o => ob.set(JSON.stringify(o), o));
+  out.outbox = [...ob.values()];
+  out.del = del; out.updated = Math.max(L.updated || 0, R.updated || 0);
+  return normalize(out);
 }
 
-/* ---- Синхронизация через Telegram CloudStorage ---- */
+/* ---- Синхронизация через Telegram CloudStorage ----
+   • Изменения других устройств подтягиваются каждые 15 секунд и при возврате в приложение.
+   • Перед записью в облако проверяется, не записало ли туда что-то другое устройство; если да –
+     данные сначала сливаются по записям, и только потом сохраняются. Ничьи правки не затираются. */
 const CS = TGV('6.9') ? tg.CloudStorage : null;
 const CHUNK = 3800;
-let cloudReady = !CS, cloudPending = false, cloudTimer = null;
+const LINK = 'finapp_cloud_linked', BACKUP = 'finapp_backup', SEEN = 'finapp_cloud_seen';
+let cloudReady = !CS, cloudPending = false, cloudTimer = null, cloudBusy = false, cloudAgain = false, cloudTries = 0;
+let cloudSeen = +(localStorage.getItem(SEEN) || 0);
+const setSeen = v => { cloudSeen = v; try { localStorage.setItem(SEEN, String(v)); } catch (e) {} };
 function scheduleCloud() { if (!CS) return; if (!cloudReady) { cloudPending = true; return; } clearTimeout(cloudTimer); cloudTimer = setTimeout(cloudSave, 1200); }
-function cloudSave() {
-  const str = ser(), n = Math.ceil(str.length / CHUNK);
-  if (n > 1000) { toast('Данных слишком много для облака Telegram'); return; }
-  CS.getItem('c_meta', (e, m) => {
-    let old = 0; try { old = m ? JSON.parse(m).n : 0; } catch (x) {}
-    let left = n;
-    for (let i = 0; i < n; i++) CS.setItem('c_' + i, str.slice(i * CHUNK, (i + 1) * CHUNK), err => {
-      if (--left === 0 && !err) {
-        CS.setItem('c_meta', JSON.stringify({ n, updated: S.updated }));
-        const extra = []; for (let j = n; j < old; j++) extra.push('c_' + j);
-        if (extra.length) CS.removeItems(extra);
-      }
-    });
+function readMeta(cb) { CS.getItem('c_meta', (e, m) => { if (e) return cb(null, true); let meta = null; try { meta = m ? JSON.parse(m) : null; } catch (x) {} cb(meta, false); }); }
+function readCloud(meta, cb) {
+  const keys = []; for (let i = 0; i < meta.n; i++) keys.push('c_' + i);
+  CS.getItems(keys, (e, vals) => {
+    let d = null;
+    try { if (!e && vals) d = JSON.parse(keys.map(k => vals[k] || '').join('')); } catch (x) {}
+    cb(d && Array.isArray(d.accounts) ? d : null);
   });
 }
-// Защита данных при синхронизации:
+// Сливает облачные данные с локальными. Возвращает true, если после слияния облако нужно перезаписать.
+function absorb(d, meta) {
+  const before = contentKey(S), merged = mergeStates(S, d), mk = contentKey(merged), needWrite = mk !== contentKey(d);
+  S = merged; SNAP = snapOf(S); S.updated = needWrite ? Date.now() : (d.updated || meta.updated);
+  saveLocal(); setSeen(meta.updated); recompute();
+  if (mk !== before) { if (UI.sheet === 'onb' && S.onb) closeSheet(true); render(); }
+  return needWrite;
+}
+function cloudDone() { cloudBusy = false; if (cloudAgain) { cloudAgain = false; scheduleCloud(); } }
+function cloudSave() {
+  if (cloudBusy) { cloudAgain = true; return; }
+  cloudBusy = true;
+  readMeta((meta, err) => {
+    if (err) return cloudDone();
+    const write = () => {
+      const str = ser(), n = Math.ceil(str.length / CHUNK), old = meta ? meta.n || 0 : 0;
+      if (n > 1000) { toast('Данных слишком много для облака Telegram'); return cloudDone(); }
+      let left = n, failed = false; const upd = S.updated;
+      for (let i = 0; i < n; i++) CS.setItem('c_' + i, str.slice(i * CHUNK, (i + 1) * CHUNK), e => {
+        if (e) failed = true;
+        if (--left) return;
+        if (failed) return cloudDone();
+        CS.setItem('c_meta', JSON.stringify({ n, updated: upd }), () => {
+          setSeen(upd);
+          const extra = []; for (let j = n; j < old; j++) extra.push('c_' + j);
+          if (extra.length) CS.removeItems(extra);
+          cloudDone();
+        });
+      });
+    };
+    if (meta && meta.n && meta.updated > cloudSeen) {
+      readCloud(meta, d => { if (!d) return cloudDone(); absorb(d, meta); S.updated = Date.now(); saveLocal(); write(); });
+    } else write();
+  });
+}
+function cloudPoll() {
+  if (!CS || !cloudReady || cloudBusy) return;
+  readMeta(meta => {
+    if (!meta || !meta.n || meta.updated <= cloudSeen || cloudBusy) return;
+    readCloud(meta, d => { if (d && !cloudBusy && absorb(d, meta)) scheduleCloud(); });
+  });
+}
+// Защита данных при первом запуске на устройстве:
 // • на устройстве, которое ещё ни разу не синхронизировалось, облако Telegram всегда главнее локальных данных;
 // • пока облако не прочитано успешно, ничего в него не записывается;
 // • перед заменой локальных данных с операциями делается резервная копия на устройстве.
-const LINK = 'finapp_cloud_linked', BACKUP = 'finapp_backup';
-let cloudTries = 0;
 function cloudLoad() {
   if (!CS) { cloudChecked(); return; }
   const linked = localStorage.getItem(LINK) === '1';
@@ -341,22 +434,23 @@ function cloudLoad() {
     setTimeout(famSync, 300);
   };
   const fail = () => { if (++cloudTries < 4) setTimeout(cloudLoad, 4000); cloudChecked(); };
-  CS.getItem('c_meta', (e, m) => {
-    if (e) return fail();
-    let meta = null; try { meta = m ? JSON.parse(m) : null; } catch (x) {}
+  readMeta((meta, err) => {
+    if (err) return fail();
     if (!meta || !meta.n) { if (S.updated) cloudPending = true; return done(); }
-    if (linked && meta.updated <= S.updated) { if (meta.updated < S.updated) cloudPending = true; return done(); }
-    const keys = []; for (let i = 0; i < meta.n; i++) keys.push('c_' + i);
-    CS.getItems(keys, (e2, vals) => {
-      let d = null;
-      try { if (!e2 && vals) d = JSON.parse(keys.map(k => vals[k] || '').join('')); } catch (x) {}
-      if (!d || !Array.isArray(d.accounts)) return fail();
-      if (S.tx.length && ser() !== JSON.stringify(d)) { try { localStorage.setItem(BACKUP, JSON.stringify({ at: Date.now(), data: JSON.parse(ser()) })); } catch (x) {} }
-      S = normalize(d); cloudPending = false;
-      try { localStorage.setItem(KEY, ser()); } catch (x) {}
-      recompute();
-      if (UI.sheet === 'onb' && S.onb) closeSheet(true);
-      render(); toast('Данные загружены из облака Telegram');
+    if (linked && meta.updated <= cloudSeen) { if (S.updated > meta.updated) cloudPending = true; return done(); }
+    if (linked && !cloudSeen && meta.updated <= S.updated) { cloudPending = true; return done(); } // переход со старой версии: локальные данные свежее
+    readCloud(meta, d => {
+      if (!d) return fail();
+      if (!linked || !cloudSeen) {
+        // первое подключение устройства или переход со старой версии – берём облако целиком
+        if (S.tx.length && ser() !== JSON.stringify(d)) { try { localStorage.setItem(BACKUP, JSON.stringify({ at: Date.now(), data: JSON.parse(ser()) })); } catch (x) {} }
+        S = normalize(d); SNAP = snapOf(S); cloudPending = false;
+        saveLocal(); setSeen(meta.updated); recompute();
+        if (UI.sheet === 'onb' && S.onb) closeSheet(true);
+        render(); if (!linked) toast('Данные загружены из облака Telegram');
+        return done();
+      }
+      if (absorb(d, meta)) cloudPending = true;
       done();
     });
   });
@@ -1046,14 +1140,14 @@ if (tg && tg.onEvent) tg.onEvent('themeChanged', () => { themeColors(); draw(); 
 const pctf = v => (v * 100).toFixed(Math.abs(v) < .1 ? 1 : 0).replace('.', ',') + '%';
 const dec1 = v => v.toFixed(1).replace('.', ',');
 function pstats(from, to) {
-  const o = { inc: 0, exp: 0, must: 0, passive: 0, debt: 0, rev: 0, bal: 0 };
+  const o = { inc: 0, exp: 0, must: 0, passive: 0, debt: 0, rev: 0, bal: 0, debtCats: {} };
   for (const t of SORTED) {
     if (t.d < from) continue; if (t.d > to) break;
     const a = accById(t.a); if (!a) continue;
     if (t.t === 'inc' || t.t === 'exp') {
       const v = conv(t.amt, a.cur, S.base, t.d), c = catById(t.c);
       if (t.t === 'inc') { o.inc += v; if (c && c.passive) o.passive += v; }
-      else { o.exp += v; if (c && c.must) o.must += v; if (c && c.debt) o.debt += v; }
+      else { o.exp += v; if (c && c.must) o.must += v; if (c && c.debt) { o.debt += v; o.debtCats[c.id] = (o.debtCats[c.id] || 0) + v; } }
     } else if (t.t === 'tr') {
       const b = accById(t.a2);
       if (b && b.type === 'liab' && a.type !== 'liab') o.debt += conv(t.amt2, b.cur, S.base, t.d);
@@ -1097,6 +1191,11 @@ function health() {
   v = !hasLiab && p.debt === 0 ? 0 : avgInc > 0 ? avgDebt / avgInc : null;
   m.debtload = { name: 'Долговая нагрузка', v, s: st(v, .2, .4, false), val: v == null ? '–' : v === 0 && !hasLiab ? 'нет долгов' : pctf(v), target: 'Платежи по долгам к доходу. Ориентир – до 20%',
     hint: { good: hasLiab ? 'Кредиты не мешают копить.' : 'Долгов нет – все доходы работают на вас.', ok: 'Ощутимая нагрузка. Не берите новых кредитов и гасите досрочно самый дорогой.', bad: 'Долги съедают значительную часть дохода. Приоритет – снизить нагрузку: рефинансирование, досрочное погашение.', na: 'Погашение записывайте переводом на счёт долга, проценты – расходом с отметкой «Платёж по долгу».' } };
+  if (!hasLiab && p.debt > 0) {
+    const names = Object.keys(p.debtCats).map(id => '«' + (catById(id) || { name: '?' }).name + '»').join(', ');
+    const h = `Счетов-долгов нет, но учтены расходы по статьям с отметкой «Платёж по долгу»: ${names}. Если это не платежи по кредитам, снимите отметку: Настройки → нажмите на статью.`;
+    m.debtload.hint = { good: h, ok: h, bad: h, na: h };
+  }
   v = as > 0 ? li / as : li > 0 ? Infinity : 0;
   m.debtassets = { name: 'Долг к активам', v, s: st(v, .3, .5, false), val: li <= 0 ? '0%' : isFinite(v) ? pctf(v) : 'долг > активов', target: 'Какая часть имущества на самом деле принадлежит кредиторам. Ориентир – до 30%',
     hint: { good: 'Капитал в основном ваш.', ok: 'Заметная доля активов в долг. Снижайте её по мере погашения.', bad: 'Долги сопоставимы с активами – капитал уязвим.', na: '' } };
@@ -1632,11 +1731,14 @@ Object.assign(ACT, {
   }
 });
 /* ================= Старт ================= */
+SNAP = snapOf(S);
 themeColors(); recompute(); render();
 cloudLoad();
 if (!CS) setTimeout(famSync, 300);
 setInterval(() => { if (document.visibilityState === 'visible') famSync(); }, 30000);
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') famSync(); });
+setInterval(() => { if (document.visibilityState === 'visible') cloudPoll(); }, 15000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { cloudPoll(); famSync(); } });
+window.addEventListener('focus', () => cloudPoll());
 if (CS && !S.onb) setTimeout(() => { if (!S.onb) cloudChecked(); }, 6000);
 loadLatest().then(ok => { if (ok || !RK.length) render(); });
 
