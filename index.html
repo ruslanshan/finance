@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="ru">
+<!-- «Точка Б» – учёт личных финансов. © 2026 Шандриков Руслан Владимирович (Telegram @rushandrikov). Все права защищены. -->
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
@@ -125,7 +126,7 @@ textarea{min-height:140px;font-family:ui-monospace,Menlo,Consolas,monospace;font
 #sheet.open{transform:none}
 .grab{width:38px;height:5px;border-radius:3px;background:var(--sep);margin:0 auto 12px}
 .stitle{font-size:19px;font-weight:700;margin:0 2px 14px}
-#toast{position:fixed;left:50%;bottom:calc(150px + env(safe-area-inset-bottom,0px));transform:translateX(-50%) translateY(10px);background:rgba(30,30,34,.92);color:#fff;padding:9px 16px;border-radius:20px;font-size:14px;opacity:0;pointer-events:none;transition:.2s;z-index:30;white-space:nowrap}
+#toast{position:fixed;left:50%;bottom:calc(150px + env(safe-area-inset-bottom,0px));transform:translateX(-50%) translateY(10px);background:rgba(30,30,34,.92);color:#fff;padding:9px 16px;border-radius:20px;font-size:14px;opacity:0;pointer-events:none;transition:.2s;z-index:30;max-width:88vw;text-align:center}
 #toast.on{opacity:1;transform:translateX(-50%)}
 /* health & diagnostics */
 .hdr{display:flex;align-items:center;justify-content:space-between;gap:8px}
@@ -171,6 +172,10 @@ textarea{min-height:140px;font-family:ui-monospace,Menlo,Consolas,monospace;font
 .sw input::after{content:"";position:absolute;top:3px;left:3px;width:23px;height:23px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .2s}
 .sw input:checked{background:var(--inc)}
 .sw input:checked::after{transform:translateX(19px)}
+.badge{font-size:11.5px;font-weight:500;color:var(--hint);background:var(--fill);border-radius:6px;padding:1px 6px;margin-left:4px;white-space:nowrap}
+.doc{background:var(--bg);border-radius:14px;padding:16px 18px;font-size:15px;line-height:1.5}
+.doc h2{font-size:16px;margin:18px 0 6px}.doc h2:first-child{margin-top:0}
+.doc p{margin:6px 0}.doc ul{margin:6px 0 6px 20px}.doc li{margin:4px 0}
 @media (prefers-reduced-motion:reduce){#sheet,#sheet-bg,#toast{transition:none}}
 </style>
 </head>
@@ -190,6 +195,18 @@ textarea{min-height:140px;font-family:ui-monospace,Menlo,Consolas,monospace;font
 <script>
 
 'use strict';
+/*
+ * «Точка Б» – учёт личных финансов (Telegram Mini App)
+ * © 2026 Шандриков Руслан Владимирович (Telegram @rushandrikov). Все права защищены.
+ * Копирование, изменение и распространение кода без письменного разрешения автора запрещены.
+ */
+const APP_VERSION = '1.6.2 · 22.09.2026';
+// ▼▼▼ Автор и контакт – показываются в разделе «О приложении» и в политике конфиденциальности ▼▼▼
+const AUTHOR_NAME = 'Шандриков Руслан Владимирович';
+const AUTHOR_CONTACT = 'Telegram @rushandrikov';
+const POLICY_DATE = '22 сентября 2026 г.';
+// ▼▼▼ Адрес сервера семейного бюджета (Cloudflare Worker). Пусто – семейный режим выключен. ▼▼▼
+const FAMILY_API = 'https://tochka-b-api.rolionxxx.workers.dev';
 /* ================= Telegram ================= */
 const tg = window.Telegram && window.Telegram.WebApp;
 const TGV = v => { try { return !!(tg && tg.initData && tg.isVersionAtLeast(v)); } catch (e) { return false; } };
@@ -230,7 +247,7 @@ const fmtShort = s => { const d = parseD(s); return d.getDate() + ' ' + MON_S[d.
 const round = (v, d = 8) => Math.round(v * Math.pow(10, d)) / Math.pow(10, d);
 
 function fmt(v, cur, sign) {
-  if (v == null || !isFinite(v)) return '—';
+  if (v == null || !isFinite(v)) return '–';
   const c = CUR[cur] || [cur, cur, 2], d = c[2], a = Math.abs(v);
   const mx = d > 2 ? d : (d === 0 || a >= 10000 ? 0 : 2), mn = d > 2 ? 0 : mx;
   const zero = a < Math.pow(10, -mx) / 2;
@@ -267,7 +284,7 @@ function defaults() {
 }
 function loadLocal() { try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && Array.isArray(s.accounts)) return s; } catch (e) {} return null; }
 function normalize(s) { s.accounts = s.accounts || []; s.cats = s.cats || []; s.tx = s.tx || []; s.plans = s.plans || {}; s.base = s.base || 'USD'; return migrate(s); }
-// v2: отметки для метрик здоровья — обязательные расходы, платежи по долгам, пассивный доход, ликвидные счета
+// v2: отметки для метрик здоровья – обязательные расходы, платежи по долгам, пассивный доход, ликвидные счета
 function migrate(s) {
   if ((s.v || 1) >= 2) return s;
   const MUST = ['Продукты', 'Транспорт', 'Жильё и коммуналка', 'Связь и интернет', 'Здоровье', 'Дети', 'Проценты по кредитам'];
@@ -321,6 +338,7 @@ function cloudLoad() {
     cloudReady = true; try { localStorage.setItem(LINK, '1'); } catch (x) {}
     if (cloudPending) { cloudPending = false; scheduleCloud(); }
     cloudChecked();
+    setTimeout(famSync, 300);
   };
   const fail = () => { if (++cloudTries < 4) setTimeout(cloudLoad, 4000); cloudChecked(); };
   CS.getItem('c_meta', (e, m) => {
@@ -380,7 +398,7 @@ function valuesAt(date, skipId) {
 }
 
 /* ================= Курсы валют ================= */
-// Источник: github.com/fawazahmed0/exchange-api — бесплатно, без ключа, ежедневные исторические курсы (с 2024-03-02)
+// Источник: github.com/fawazahmed0/exchange-api – бесплатно, без ключа, ежедневные исторические курсы (с 2024-03-02)
 const EARLIEST = '2024-03-02';
 let R = {}; try { R = JSON.parse(localStorage.getItem(RKEY)) || {}; } catch (e) {}
 let RK = Object.keys(R).sort();
@@ -532,7 +550,7 @@ V.home = {
     const row = a => {
       const v = sgn(a) * (val[a.id] || 0);
       return `<div class="row tap" data-act="acc-open" data-id="${a.id}"><div class="ico">${esc(a.icon || '💼')}</div>
-        <div class="grow"><div class="t">${esc(a.name)}</div>${a.cur !== B() ? `<div class="sub num">≈ ${fmt(conv(v, a.cur, B(), t), B())}</div>` : ''}</div>
+        <div class="grow"><div class="t">${esc(a.name)}${famBadge(a)}</div>${a.cur !== B() ? `<div class="sub num">≈ ${fmt(conv(v, a.cur, B(), t), B())}</div>` : ''}</div>
         <div class="r num">${fmt(v, a.cur)}</div></div>`;
     };
     const as = S.accounts.filter(a => a.type !== 'liab'), li = S.accounts.filter(a => a.type === 'liab');
@@ -542,10 +560,10 @@ V.home = {
       options: { maintainAspectRatio: false, animation: false, plugins: { legend: { display: false }, tooltip: { displayColors: false, callbacks: { label: c => fmt(c.parsed.y, B()) } } }, scales: { x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 8 } }, y: { display: false } } }
     }]);
     let rates = '';
-    if (multiCur()) rates = RS.latest ? `Курсы валют на ${fmtDate(RS.latest)}` : RS.loading ? 'Загружаю курсы валют…' : 'Курсы валют не загружены — проверьте интернет и обновите в настройках';
+    if (multiCur()) rates = RS.latest ? `Курсы валют на ${fmtDate(RS.latest)}` : RS.loading ? 'Загружаю курсы валют…' : 'Курсы валют не загружены – проверьте интернет и обновите в настройках';
     const outside = !(tg && tg.initData), oldTg = !outside && !CS;
     const note = outside ? `<div class="warn"><b>Открыто вне Telegram.</b> Здесь данные хранятся только в этом браузере и не синхронизируются с Telegram. Чтобы работать со своими данными на компьютере, откройте бота в <a href="https://web.telegram.org/" target="_blank" rel="noopener" style="color:inherit">Telegram Web</a> или в Telegram Desktop.</div>`
-      : oldTg ? '<div class="warn">Обновите Telegram — в этой версии не работает синхронизация между устройствами.</div>' : '';
+      : oldTg ? '<div class="warn">Обновите Telegram – в этой версии не работает синхронизация между устройствами.</div>' : '';
     return `
       <div class="hdr"><div class="title">Обзор</div><button class="iconbtn" data-act="tab" data-tab="settings" aria-label="Настройки"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button></div>
       ${note}
@@ -568,16 +586,16 @@ V.home = {
 
 /* ---------- Операции ---------- */
 function txView(t) {
-  const a = accById(t.a), cur = a ? a.cur : B(), an = a ? a.name : 'Удалённый счёт';
+  const a = accById(t.a), cur = a ? a.cur : B(), an = a ? a.name : t.sh ? 'Личный счёт · ' + memberName(t.by) : 'Удалённый счёт';
   switch (t.t) {
     case 'inc': case 'exp': { const c = catById(t.c); return { icon: c ? c.icon : '❔', title: c ? c.name : 'Без статьи', sub: an, amt: fmt(t.t === 'inc' ? t.amt : -t.amt, cur, true), cls: t.t }; }
-    case 'tr': { const b = accById(t.a2); return { icon: '🔁', title: 'Перевод', sub: an + ' → ' + (b ? b.name : '?'), amt: fmt(t.amt, cur) + (b && b.cur !== cur ? ' → ' + fmt(t.amt2, b.cur) : ''), cls: '' }; }
+    case 'tr': { const b = accById(t.a2); return { icon: '🔁', title: 'Перевод', sub: an + ' → ' + (b ? b.name : t.sh ? 'личный счёт · ' + memberName(t.by) : '?'), amt: !a && b ? fmt(t.amt2, b.cur) : fmt(t.amt, cur) + (b && a && b.cur !== cur ? ' → ' + fmt(t.amt2, b.cur) : ''), cls: '' }; }
     case 'rev': return { icon: '📈', title: 'Переоценка', sub: an + ': ' + fmt(t.nb, cur), amt: fmt(t._delta, cur, true), cls: 'rev' };
     case 'bal': return { icon: '⚖️', title: 'Остаток', sub: an + ': ' + fmt(t.nb, cur), amt: fmt(t._delta, cur, true), cls: 'rev' };
   }
   return { icon: '•', title: '?', sub: '', amt: '', cls: '' };
 }
-const txRow = t => { const v = txView(t); return `<div class="row tap" data-act="tx-open" data-id="${t.id}"><div class="ico">${esc(v.icon)}</div><div class="grow"><div class="t">${esc(v.title)}</div><div class="sub t">${esc(v.sub)}${t.n ? ' · ' + esc(t.n) : ''}</div></div><div class="r num ${v.cls}">${v.amt}</div></div>`; };
+const txRow = t => { const v = txView(t); return `<div class="row tap" data-act="tx-open" data-id="${t.id}"><div class="ico">${esc(v.icon)}</div><div class="grow"><div class="t">${esc(v.title)}</div><div class="sub t">${esc(v.sub)}${t.n ? ' · ' + esc(t.n) : ''}${t.sh && t.by && t.by !== myId() ? ' · 👤 ' + esc(memberName(t.by)) : ''}</div></div><div class="r num ${v.cls}">${v.amt}</div></div>`; };
 V.ops = {
   need() { return []; },
   draw() {
@@ -654,7 +672,7 @@ V.plan = {
         else { color = pct >= 1 ? COL.inc : COL.accent; note = pct >= 1 ? 'сверх плана ' + fmt(fa - p, B()) : 'до плана ' + fmt(p - fa, B()); }
         return `<div class="row ${isM ? 'tap' : ''}" ${isM ? `data-act="pl-edit" data-id="${c.id}"` : ''}><div class="ico">${esc(c.icon || '•')}</div>
           <div class="grow"><div class="t">${esc(c.name)}</div><div class="bar"><i style="width:${Math.min(100, pct * 100).toFixed(1)}%;background:${color}"></i></div><div class="sub">${note}</div></div>
-          <div class="r num"><div>${fmt(fa, B())}</div><div class="sub">из ${p ? fmt(p, B()) : '—'}</div></div></div>`;
+          <div class="r num"><div>${fmt(fa, B())}</div><div class="sub">из ${p ? fmt(p, B()) : '–'}</div></div></div>`;
       }).join('');
       return { rows, tp };
     };
@@ -668,7 +686,7 @@ V.plan = {
     html += `<div class="h1">Расходы</div><div class="card">${e.rows || '<div class="empty">Нет данных</div>'}</div>`;
     html += `<div class="h1">Доходы</div><div class="card">${i.rows || '<div class="empty">Нет данных</div>'}</div>`;
     html += isM ? `<button class="btn ghost" data-act="pl-copy">Скопировать план из прошлого месяца</button><div class="foot">Нажмите на статью, чтобы задать план на месяц.</div>`
-                : `<div class="foot">Годовой план — сумма месячных планов. Задавать суммы можно в режиме «Месяц».</div>`;
+                : `<div class="foot">Годовой план – сумма месячных планов. Задавать суммы можно в режиме «Месяц».</div>`;
     return html;
   }
 };
@@ -678,28 +696,32 @@ V.settings = {
   need() { return []; },
   draw() {
     const catChips = kind => S.cats.filter(c => c.kind === kind && !c.del).map(c => `<button class="chip" data-act="cat-open" data-id="${c.id}">${esc(c.icon || '')} ${esc(c.name)}</button>`).join('') + `<button class="chip add" data-act="cat-open" data-kind="${kind}">＋ Добавить</button>`;
-    const accRows = type => S.accounts.filter(a => (a.type === 'liab') === (type === 'liab')).map(a => `<div class="row tap" data-act="acc-open" data-id="${a.id}"><div class="ico">${esc(a.icon || '💼')}</div><div class="grow"><div class="t">${esc(a.name)}</div>${a.type !== 'liab' ? `<div class="sub">${a.liquid ? 'ликвидный' : 'не для подушки'}</div>` : ''}</div><div class="sub">${a.cur}</div></div>`).join('');
+    const accRows = type => S.accounts.filter(a => (a.type === 'liab') === (type === 'liab')).map(a => `<div class="row tap" data-act="acc-open" data-id="${a.id}"><div class="ico">${esc(a.icon || '💼')}</div><div class="grow"><div class="t">${esc(a.name)}${famBadge(a)}</div>${a.type !== 'liab' ? `<div class="sub">${a.liquid ? 'ликвидный' : 'не для подушки'}</div>` : ''}</div><div class="sub">${a.cur}</div></div>`).join('');
     const used = [...new Set(S.accounts.map(a => a.cur).filter(c => c !== B()))];
     const r = rateOf(today());
-    const rateRows = used.map(c => `<div class="row"><div class="grow">1 ${c}</div><div class="r num">${r && r[c] && r[B()] ? fmt(r[B()] / r[c], B()) : '—'}</div></div>`).join('');
+    const rateRows = used.map(c => `<div class="row"><div class="grow">1 ${c}</div><div class="r num">${r && r[c] && r[B()] ? fmt(r[B()] / r[c], B()) : '–'}</div></div>`).join('');
     const names = f => S.cats.filter(c => !c.del && c[f]).map(c => esc(c.name)).join(', ') || 'не отмечены';
     return `<button class="back" data-act="tab" data-tab="home">‹ Обзор</button><div class="title">Настройки</div>
       <div class="h1">Валюта отчётов</div>
-      <div class="card pad"><select data-change="base">${CODES.map(c => `<option value="${c}" ${c === B() ? 'selected' : ''}>${c} — ${CUR[c][0]}</option>`).join('')}</select>
+      <div class="card pad"><select data-change="base">${CODES.map(c => `<option value="${c}" ${c === B() ? 'selected' : ''}>${c} – ${CUR[c][0]}</option>`).join('')}</select>
         <div class="sub" style="margin-top:8px">В этой валюте показываются капитал, статистика и планы. Каждый счёт ведётся в своей валюте и пересчитывается по курсу на дату операции.</div></div>
       <div class="h1">Счета и активы</div><div class="card">${accRows('asset')}<button class="link" data-act="acc-open" data-type="asset">＋ Добавить счёт или актив</button></div>
       <div class="h1">Обязательства</div><div class="card">${accRows('liab')}<button class="link" data-act="acc-open" data-type="liab">＋ Добавить кредит или долг</button></div>
+      ${famCard()}
       <div class="h1">Статьи расходов</div><div class="card pad"><div class="chips">${catChips('exp')}</div>
         <div class="sub" style="margin-top:10px">Обязательные: ${names('must')}.<br>Платежи по долгам: ${names('debt')}.</div></div>
       <div class="h1">Источники доходов</div><div class="card pad"><div class="chips">${catChips('inc')}</div>
         <div class="sub" style="margin-top:10px">Пассивный доход: ${names('passive')}.</div></div>
       <div class="foot">Отметки нужны для метрик на экране «Здоровье». Нажмите на статью или счёт, чтобы изменить.</div>
       <div class="h1">Курсы валют</div>
-      <div class="card">${rateRows || '<div class="empty">Все счета в валюте отчётов — пересчёт не нужен</div>'}<button class="link" data-act="rates-refresh">${RS.loading ? 'Обновляю…' : 'Обновить курсы'}</button></div>
+      <div class="card">${rateRows || '<div class="empty">Все счета в валюте отчётов – пересчёт не нужен</div>'}<button class="link" data-act="rates-refresh">${RS.loading ? 'Обновляю…' : 'Обновить курсы'}</button></div>
       <div class="foot">${RS.latest ? 'Последние курсы: ' + fmtDate(RS.latest) + '. ' : ''}Ежедневные курсы загружаются автоматически для каждой даты с операциями (история доступна с марта 2024).</div>
       <div class="h1">Данные</div>
       <div class="card"><button class="link" data-act="export">Экспорт в JSON</button><button class="link" data-act="import">Импорт из JSON</button>${backupInfo() ? `<button class="link" data-act="restore-backup">Восстановить копию с устройства от ${backupInfo()}</button>` : ''}<button class="link" data-act="reset" style="color:var(--exp)">Удалить все данные</button></div>
-      <div class="foot">${CS ? 'Данные хранятся на устройстве и синхронизируются через облако Telegram.' : 'Данные хранятся на этом устройстве. Сделайте экспорт, чтобы не потерять их.'} Операций: ${S.tx.length}.</div>`;
+      <div class="foot">${CS ? 'Данные хранятся на устройстве и синхронизируются через облако Telegram.' : 'Данные хранятся на этом устройстве. Сделайте экспорт, чтобы не потерять их.'} Операций: ${S.tx.length}.</div>
+      <div class="h1">О приложении</div>
+      <div class="card"><button class="link" data-act="show-policy">Политика конфиденциальности</button><button class="link" data-act="tab" data-tab="about">О приложении и авторские права</button></div>
+      <div class="foot">«Точка Б» · версия ${APP_VERSION}<br>© 2026 ${esc(AUTHOR_NAME)}. Все права защищены.</div>`;
   }
 };
 
@@ -712,7 +734,7 @@ function draw() {
   mountCharts();
   const tabKey = UI.tab === 'diag' || UI.tab === 'diagres' ? 'health' : UI.tab;
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tabKey));
-  $('#fab').classList.toggle('hide', ['settings', 'health', 'diag', 'diagres'].includes(UI.tab));
+  $('#fab').classList.toggle('hide', ['settings', 'health', 'diag', 'diagres', 'privacy', 'about'].includes(UI.tab));
 }
 async function render() {
   const seq = ++renderSeq; draw();
@@ -722,7 +744,7 @@ async function render() {
 
 /* ================= Шторка ================= */
 let toastT;
-function toast(msg) { const el = $('#toast'); el.textContent = msg; el.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove('on'), 2200); }
+function toast(msg) { const el = $('#toast'); el.textContent = msg; el.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove('on'), msg.length > 40 ? 5000 : 2200); }
 const backHandler = () => closeSheet();
 function openSheet(kind, html) {
   UI.sheet = kind; $('#sheet').innerHTML = '<div class="grab"></div>' + html;
@@ -769,7 +791,7 @@ function opHtml() {
       body = field('Со счёта', `<select data-fs="a">${accOptions(F.a, accs)}</select>`) + field('Сумма списания', amountInput('amt', F.amt, a.cur))
         + field('На счёт', `<select data-fs="a2">${accOptions(F.a2, accs.filter(x => x.id !== a.id))}</select>`);
       if (b.cur !== a.cur) body += field('Сумма зачисления', amountInput('amt2', F.amt2, b.cur)) + `<div class="hintline" id="trhint"></div>`;
-      body += `<div class="sub" style="margin:-4px 4px 12px">Перевод не влияет на доходы и расходы. Погашение кредита — перевод на счёт обязательства, проценты запишите расходом.</div>`;
+      body += `<div class="sub" style="margin:-4px 4px 12px">Перевод не влияет на доходы и расходы. Погашение кредита – перевод на счёт обязательства, проценты запишите расходом.</div>`;
     }
   } else {
     const list = F.t === 'rev' ? accs.filter(x => x.type !== 'liab' || x.id === F.a) : accs;
@@ -823,8 +845,9 @@ function saveOp() {
     const v = num(F.nb); if (!isFinite(v)) return toast('Введите сумму');
     t.nb = v;
   }
-  const edit = !!F.edit, i = S.tx.findIndex(x => x.id === t.id);
+  const edit = !!F.edit, i = S.tx.findIndex(x => x.id === t.id), prev = i >= 0 ? S.tx[i] : null;
   if (i >= 0) S.tx[i] = t; else S.tx.push(t);
+  famAfterTx(t, prev);
   persist(); haptic('ok'); closeSheet(true); toast(edit ? 'Изменения сохранены' : 'Операция добавлена'); render();
 }
 
@@ -834,6 +857,7 @@ const hasTx = id => S.tx.some(t => t.a === id || t.a2 === id);
 function openAcc(id, type) {
   const a = id ? accById(id) : null;
   AF = a ? Object.assign({}, a) : { id: null, name: '', icon: type === 'liab' ? '🏦' : '💳', type: type || 'asset', cur: B(), init: '', liquid: true };
+  AF.share = !!AF.sh;
   openSheet('acc', accHtml());
 }
 function accHtml() {
@@ -841,23 +865,28 @@ function accHtml() {
   return `<div class="stitle">${AF.id ? 'Счёт' : liab ? 'Новое обязательство' : 'Новый счёт или актив'}</div>
     ${field('Тип', seg('acc-type', [['asset', 'Актив / счёт'], ['liab', 'Обязательство']], AF.type).replace('<div class="seg"', locked ? '<div class="seg" style="opacity:.55;pointer-events:none"' : '<div class="seg"'))}
     ${field('Название', `<div class="two"><input data-af="icon" value="${esc(AF.icon)}" maxlength="4" aria-label="Иконка"><input data-af="name" value="${esc(AF.name)}" placeholder="${liab ? 'Например, Ипотека' : 'Например, Карта или Биткоин'}" maxlength="40"></div>`)}
-    ${field('Валюта', `<select data-af="cur" ${locked ? 'disabled' : ''}>${CODES.map(c => `<option value="${c}" ${c === AF.cur ? 'selected' : ''}>${c} — ${CUR[c][0]}</option>`).join('')}</select>`)}
+    ${field('Валюта', `<select data-af="cur" ${locked ? 'disabled' : ''}>${CODES.map(c => `<option value="${c}" ${c === AF.cur ? 'selected' : ''}>${c} – ${CUR[c][0]}</option>`).join('')}</select>`)}
     ${locked ? '<div class="sub" style="margin:-6px 4px 12px">Тип и валюту нельзя менять, пока по счёту есть операции.</div>' : ''}
-    ${liab ? '' : toggle('af', 'liquid', AF.liquid, 'Ликвидный', 'Деньги можно получить за пару дней — счёт входит в финансовую подушку')}
+    ${liab ? '' : toggle('af', 'liquid', AF.liquid, 'Ликвидный', 'Деньги можно получить за пару дней – счёт входит в финансовую подушку')}
     ${field(liab ? 'Сумма долга на старте' : 'Начальный остаток', `<div class="amtwrap"><input class="num" data-af="init" inputmode="decimal" placeholder="0" value="${esc(AF.init)}"><span>${AF.cur}</span></div>`)}
-    <button class="btn" data-act="acc-save">${AF.id ? 'Сохранить' : 'Добавить'}</button>
-    ${AF.id ? '<button class="btn danger" data-act="acc-del">Удалить</button>' : ''}`;
+    ${famAccBlock()}
+    ${famAccLocked() ? '<button class="btn ghost" data-act="sheet-close">Закрыть</button>' : `<button class="btn" data-act="acc-save">${AF.id ? 'Сохранить' : 'Добавить'}</button>
+    ${AF.id ? '<button class="btn danger" data-act="acc-del">Удалить</button>' : ''}`}`;
 }
 function saveAcc() {
   const name = (AF.name || '').trim(); if (!name) return toast('Введите название');
   const init = AF.init === '' ? 0 : num(AF.init); if (!isFinite(init)) return toast('Проверьте начальную сумму');
   const data = { name, icon: (AF.icon || '').trim() || '💼', type: AF.type, cur: AF.cur, init, liquid: AF.type !== 'liab' && !!AF.liquid };
-  if (AF.id) Object.assign(accById(AF.id), data); else S.accounts.push(Object.assign({ id: uid() }, data));
+  if (famAccLocked()) return toast('Изменить общий счёт может только владелец');
+  let acc; if (AF.id) { acc = accById(AF.id); Object.assign(acc, data); } else { acc = Object.assign({ id: uid() }, data); S.accounts.push(acc); }
+  famAfterAcc(acc, !!AF.share);
   persist(); closeSheet(true); toast('Сохранено'); render();
 }
 async function delAcc() {
-  const id = AF.id, n = S.tx.filter(t => t.a === id || t.a2 === id).length;
+  const id = AF.id, n = S.tx.filter(t => t.a === id || t.a2 === id).length, accx = accById(id);
+  if (famAccLocked()) return toast('Удалить общий счёт может только его владелец');
   if (!(await ask(n ? `Удалить счёт и ${n} связанных операций?` : 'Удалить счёт?'))) return;
+  if (accx && accx.sh) famQueue({ k: 'accdel', id });
   S.tx = S.tx.filter(t => t.a !== id && t.a2 !== id); S.accounts = S.accounts.filter(a => a.id !== id);
   persist(); closeSheet(true); toast('Счёт удалён'); render();
 }
@@ -871,7 +900,7 @@ function openCat(id, kind, back) {
 }
 const catHtml = () => `<div class="stitle">${CF.id ? 'Статья' : CF.kind === 'inc' ? 'Новый источник дохода' : 'Новая статья расходов'}</div>
   ${field('Иконка и название', `<div class="two"><input data-cf="icon" value="${esc(CF.icon)}" maxlength="4" aria-label="Иконка"><input data-cf="name" value="${esc(CF.name)}" placeholder="Название" maxlength="40"></div>`)}
-  ${CF.kind === 'exp' ? toggle('cf', 'must', CF.must, 'Обязательный расход', 'То, без чего не прожить: жильё, еда, транспорт, кредиты') + toggle('cf', 'debt', CF.debt, 'Платёж по долгу', 'Проценты и платежи по кредитам — для расчёта долговой нагрузки') : toggle('cf', 'passive', CF.passive, 'Пассивный доход', 'Приходит без вашей работы: проценты, дивиденды, аренда')}
+  ${CF.kind === 'exp' ? toggle('cf', 'must', CF.must, 'Обязательный расход', 'То, без чего не прожить: жильё, еда, транспорт, кредиты') + toggle('cf', 'debt', CF.debt, 'Платёж по долгу', 'Проценты и платежи по кредитам – для расчёта долговой нагрузки') : toggle('cf', 'passive', CF.passive, 'Пассивный доход', 'Приходит без вашей работы: проценты, дивиденды, аренда')}
   <button class="btn" data-act="cat-save">${CF.id ? 'Сохранить' : 'Добавить'}</button>
   ${CF.back ? '<button class="btn ghost" data-act="sheet-close">Отмена</button>' : ''}
   ${CF.id ? '<button class="btn danger" data-act="cat-del">Удалить</button>' : ''}`;
@@ -924,24 +953,45 @@ function openExport() {
   openSheet('exp', `<div class="stitle">Экспорт данных</div><textarea readonly id="expdata">${esc(json)}</textarea>
     <button class="btn" data-act="copy-export" style="margin-top:12px">Скопировать</button>
     <button class="btn ghost" data-act="dl-export">Скачать файл</button>
-    <div class="foot">Сохраните текст, например в «Избранном» Telegram. Восстановить: Настройки → Импорт.</div>`);
+    <div class="foot">Сохраните текст, например в «Избранном» Telegram. Длинный текст Telegram разобьёт на несколько сообщений – при восстановлении выделите их все и скопируйте вместе, приложение само их склеит. Восстановить: Настройки → Данные → Импорт.</div>`);
 }
 function openImport() {
   openSheet('imp', `<div class="stitle">Импорт данных</div><textarea id="impdata" placeholder="Вставьте сюда JSON из экспорта"></textarea>
     <button class="btn" data-act="import-do" style="margin-top:12px">Загрузить</button>
     <div class="foot">Текущие данные будут заменены.</div>`);
 }
+// Чинит текст, испорченный при пересылке через Telegram: разбивка на несколько сообщений,
+// заголовки «Имя, [22.09.2026 15:40]», переносы строк, «умные» кавычки.
+function parseBackup(raw) {
+  const clean = t => {
+    t = t.replace(/\u00A0/g, ' ').replace(/[\u200B-\u200D\uFEFF]/g, '');
+    t = t.split(/\r?\n/).filter(l => !/^\s*[^{}"]{1,80},?\s*\[\d{1,2}[./]\d{1,2}[./]\d{2,4}[^\]]*\]:?\s*$/.test(l)).join('');
+    const a = t.indexOf('{'), b = t.lastIndexOf('}');
+    return a < 0 || b < a ? '' : t.slice(a, b + 1);
+  };
+  const body = clean(String(raw || ''));
+  if (!body) return { err: 'В тексте нет данных экспорта' };
+  try { return { d: JSON.parse(body) }; } catch (e) {}
+  // Вторая попытка – если кавычки превратились в «умные»
+  try { return { d: JSON.parse(body.replace(/[\u201C\u201D\u201E\u2033]/g, '"')) }; } catch (e) {}
+  if (!/^\{"v":/.test(body)) return { err: 'Нет начала экспорта – скопируйте текст целиком, с первого символа {' };
+  if (!/"diagHist"|"plans"/.test(body.slice(-2000))) return { err: 'Нет конца экспорта – похоже, скопирована только часть текста' };
+  return { err: 'Текст повреждён. Если Telegram разбил его на несколько сообщений, выделите их все и скопируйте вместе' };
+}
 async function doImport() {
-  let d; try { d = JSON.parse($('#impdata').value); } catch (e) { return toast('Не удалось прочитать JSON'); }
+  const r = parseBackup($('#impdata').value);
+  if (r.err) return toast(r.err);
+  const d = r.d;
   if (!d || !Array.isArray(d.accounts) || !Array.isArray(d.tx)) return toast('Это не экспорт этого приложения');
-  if (!(await ask('Заменить все текущие данные?'))) return;
+  if (!(await ask(`В копии: счетов ${d.accounts.length}, операций ${d.tx.length}. Сейчас в приложении операций ${S.tx.length}. Заменить текущие данные копией?`))) return;
   S = normalize(d); S.onb = true; persist(); closeSheet(true); toast('Данные загружены'); render();
 }
 function openOnboarding() {
   openSheet('onb', `<div class="stitle">Учёт личных финансов</div>
-    <div class="sub" style="margin:-6px 2px 16px">Выберите основную валюту. В ней будут капитал, статистика и планы. Счета можно вести в любых валютах — они пересчитываются по курсу на каждый день.</div>
-    ${field('Основная валюта', `<select id="onbcur">${CODES.map(c => `<option value="${c}" ${c === S.base ? 'selected' : ''}>${c} — ${CUR[c][0]}</option>`).join('')}</select>`)}
-    <button class="btn" data-act="onb-done">Начать</button>`);
+    <div class="sub" style="margin:-6px 2px 16px">Выберите основную валюту. В ней будут капитал, статистика и планы. Счета можно вести в любых валютах – они пересчитываются по курсу на каждый день.</div>
+    ${field('Основная валюта', `<select id="onbcur">${CODES.map(c => `<option value="${c}" ${c === S.base ? 'selected' : ''}>${c} – ${CUR[c][0]}</option>`).join('')}</select>`)}
+    <button class="btn" data-act="onb-done">Начать</button>
+    <div class="foot" style="text-align:center">Продолжая, вы соглашаетесь с <button class="link" data-act="show-policy" style="display:inline;width:auto;padding:0">политикой конфиденциальности</button></div>`);
 }
 
 /* ================= События ================= */
@@ -955,11 +1005,11 @@ const ACT = {
   'ops-filter': el => { UI.opsFilter = el.dataset.k; render(); },
   'plan-kind': el => { UI.planKind = el.dataset.k; render(); },
   'plan-nav': el => { UI.planAnchor = shift(UI.planKind, UI.planAnchor, +el.dataset.dir); render(); },
-  'tx-open': el => { const t = S.tx.find(x => x.id === el.dataset.id); if (t) openOp(null, t); },
+  'tx-open': el => { const t = S.tx.find(x => x.id === el.dataset.id); if (!t) return; if (t.sh && (!accById(t.a) || (t.t === 'tr' && !accById(t.a2)))) return toast('Операция затрагивает личный счёт другого участника – изменить её может только автор'); openOp(null, t); },
   'op-type': el => { F.t = el.dataset.k; setSheet(opHtml()); afterOpDraw(); },
   'op-cat': el => { F.c = el.dataset.id; haptic(); document.querySelectorAll('#sheet [data-act="op-cat"]').forEach(b => b.classList.toggle('on', b === el)); },
   'op-save': () => saveOp(),
-  'op-del': async () => { if (!(await ask('Удалить операцию?'))) return; S.tx = S.tx.filter(t => t.id !== F.edit); persist(); closeSheet(true); toast('Операция удалена'); render(); },
+  'op-del': async () => { if (!(await ask('Удалить операцию?'))) return; const dt = S.tx.find(t => t.id === F.edit); if (dt) famAfterDel(dt); S.tx = S.tx.filter(t => t.id !== F.edit); persist(); closeSheet(true); toast('Операция удалена'); render(); },
   'acc-open': el => openAcc(el.dataset.id, el.dataset.type),
   'acc-type': el => { AF.type = el.dataset.k; if (!AF.id) AF.icon = AF.type === 'liab' ? '🏦' : '💳'; setSheet(accHtml()); },
   'acc-save': () => saveAcc(), 'acc-del': () => delAcc(),
@@ -971,7 +1021,6 @@ const ACT = {
   'export': () => openExport(), 'import': () => openImport(), 'import-do': () => doImport(),
   'copy-export': async () => { const ta = $('#expdata'); try { await navigator.clipboard.writeText(ta.value); } catch (e) { ta.select(); document.execCommand('copy'); } toast('Скопировано'); },
   'dl-export': () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([ser()], { type: 'application/json' })); a.download = 'finance-' + today() + '.json'; document.body.appendChild(a); a.click(); a.remove(); },
-  'reset': async () => { if (!(await ask('Удалить все счета, операции и планы? Это нельзя отменить.'))) return; S = defaults(); persist(); render(); openOnboarding(); },
   'onb-done': () => { const c = $('#onbcur').value; S.base = c; S.accounts.forEach(a => { if (!hasTx(a.id)) a.cur = c; }); S.onb = true; persist(); closeSheet(true); render(); }
 };
 document.addEventListener('click', e => { const el = e.target.closest('[data-act]'); if (!el) return; const f = ACT[el.dataset.act]; if (f) { e.preventDefault(); f(el, e); } });
@@ -1036,36 +1085,36 @@ function health() {
   const net = as - li, hasMust = S.cats.some(c => c.must && !c.del), hasLiab = S.accounts.some(a => a.type === 'liab');
   const m = {};
   let v = p.inc > 0 ? (p.inc - p.exp) / p.inc : null;
-  m.savings = { name: 'Норма сбережений', v, s: st(v, .2, .1), val: v == null ? '—' : pctf(v), target: 'Какая доля дохода остаётся. Ориентир — от 20%',
-    hint: { good: 'Отличная дисциплина — эти деньги работают на ваш капитал.', ok: 'Неплохо. Следующая цель — 20%: откладывайте в день дохода, а не остаток.', bad: 'Почти ничего не остаётся. Посмотрите крупнейшие статьи в статистике и задайте лимиты в плане.', na: 'За период нет доходов.' } };
+  m.savings = { name: 'Норма сбережений', v, s: st(v, .2, .1), val: v == null ? '–' : pctf(v), target: 'Какая доля дохода остаётся. Ориентир – от 20%',
+    hint: { good: 'Отличная дисциплина – эти деньги работают на ваш капитал.', ok: 'Неплохо. Следующая цель – 20%: откладывайте в день дохода, а не остаток.', bad: 'Почти ничего не остаётся. Посмотрите крупнейшие статьи в статистике и задайте лимиты в плане.', na: 'За период нет доходов.' } };
   v = p.inc > 0 && hasMust ? p.must / p.inc : null;
-  m.must = { name: 'Обязательные расходы', v, s: st(v, .5, .7, false), val: v == null ? '—' : pctf(v), target: 'Доля дохода на то, что нельзя урезать. Ориентир — до 50%',
-    hint: { good: 'Есть запас для манёвра, если доход снизится.', ok: 'Запас небольшой. Пересмотрите крупные фиксированные платежи: жильё, связь, подписки, кредиты.', bad: 'Почти весь доход уходит на обязательное — любая просадка дохода станет проблемой.', na: hasMust ? 'За период нет доходов.' : 'Отметьте обязательные статьи в настройках.' } };
+  m.must = { name: 'Обязательные расходы', v, s: st(v, .5, .7, false), val: v == null ? '–' : pctf(v), target: 'Доля дохода на то, что нельзя урезать. Ориентир – до 50%',
+    hint: { good: 'Есть запас для манёвра, если доход снизится.', ok: 'Запас небольшой. Пересмотрите крупные фиксированные платежи: жильё, связь, подписки, кредиты.', bad: 'Почти весь доход уходит на обязательное – любая просадка дохода станет проблемой.', na: hasMust ? 'За период нет доходов.' : 'Отметьте обязательные статьи в настройках.' } };
   const base = avgMust > 0 ? avgMust : avgExp;
   v = base > 0 ? liquid / base : null;
-  m.cushion = { name: 'Финансовая подушка', v, s: st(v, 6, 3), val: v == null ? '—' : dec1(v) + ' мес.', target: `Сколько месяцев проживёте без дохода${avgMust > 0 ? ' на обязательных расходах' : ''}. Ориентир — 3–6 мес.`,
+  m.cushion = { name: 'Финансовая подушка', v, s: st(v, 6, 3), val: v == null ? '–' : dec1(v) + ' мес.', target: `Сколько месяцев проживёте без дохода${avgMust > 0 ? ' на обязательных расходах' : ''}. Ориентир – 3–6 мес.`,
     hint: { good: 'Надёжная защита от потери дохода.', ok: 'База есть. Доведите до 6 месяцев, особенно если доход в семье один.', bad: `До 3 месяцев не хватает ${fmt(Math.max(0, base * 3 - liquid), S.base)}. Сделайте подушку первой целью.`, na: 'Нужны данные о расходах и хотя бы один ликвидный счёт.' } };
   v = !hasLiab && p.debt === 0 ? 0 : avgInc > 0 ? avgDebt / avgInc : null;
-  m.debtload = { name: 'Долговая нагрузка', v, s: st(v, .2, .4, false), val: v == null ? '—' : v === 0 && !hasLiab ? 'нет долгов' : pctf(v), target: 'Платежи по долгам к доходу. Ориентир — до 20%',
-    hint: { good: hasLiab ? 'Кредиты не мешают копить.' : 'Долгов нет — все доходы работают на вас.', ok: 'Ощутимая нагрузка. Не берите новых кредитов и гасите досрочно самый дорогой.', bad: 'Долги съедают значительную часть дохода. Приоритет — снизить нагрузку: рефинансирование, досрочное погашение.', na: 'Погашение записывайте переводом на счёт долга, проценты — расходом с отметкой «Платёж по долгу».' } };
+  m.debtload = { name: 'Долговая нагрузка', v, s: st(v, .2, .4, false), val: v == null ? '–' : v === 0 && !hasLiab ? 'нет долгов' : pctf(v), target: 'Платежи по долгам к доходу. Ориентир – до 20%',
+    hint: { good: hasLiab ? 'Кредиты не мешают копить.' : 'Долгов нет – все доходы работают на вас.', ok: 'Ощутимая нагрузка. Не берите новых кредитов и гасите досрочно самый дорогой.', bad: 'Долги съедают значительную часть дохода. Приоритет – снизить нагрузку: рефинансирование, досрочное погашение.', na: 'Погашение записывайте переводом на счёт долга, проценты – расходом с отметкой «Платёж по долгу».' } };
   v = as > 0 ? li / as : li > 0 ? Infinity : 0;
-  m.debtassets = { name: 'Долг к активам', v, s: st(v, .3, .5, false), val: li <= 0 ? '0%' : isFinite(v) ? pctf(v) : 'долг > активов', target: 'Какая часть имущества на самом деле принадлежит кредиторам. Ориентир — до 30%',
-    hint: { good: 'Капитал в основном ваш.', ok: 'Заметная доля активов в долг. Снижайте её по мере погашения.', bad: 'Долги сопоставимы с активами — капитал уязвим.', na: '' } };
+  m.debtassets = { name: 'Долг к активам', v, s: st(v, .3, .5, false), val: li <= 0 ? '0%' : isFinite(v) ? pctf(v) : 'долг > активов', target: 'Какая часть имущества на самом деле принадлежит кредиторам. Ориентир – до 30%',
+    hint: { good: 'Капитал в основном ваш.', ok: 'Заметная доля активов в долг. Снижайте её по мере погашения.', bad: 'Долги сопоставимы с активами – капитал уязвим.', na: '' } };
   v = p.exp > 0 ? p.passive / p.exp : null;
-  m.passive = { name: 'Покрытие пассивным доходом', v, s: v == null ? 'na' : v >= .25 ? 'good' : 'ok', val: v == null ? '—' : pctf(v), target: 'Какую часть расходов оплачивают деньги без вашей работы. Чем больше, тем лучше',
-    hint: { good: 'Капитал уже заметно работает на вас.', ok: S.cats.some(c => c.passive) ? 'Это ваш путь к независимости: 100% — когда можно не работать.' : 'Отметьте источники пассивного дохода в настройках.', bad: '', na: 'За период нет расходов.' } };
+  m.passive = { name: 'Покрытие пассивным доходом', v, s: v == null ? 'na' : v >= .25 ? 'good' : 'ok', val: v == null ? '–' : pctf(v), target: 'Какую часть расходов оплачивают деньги без вашей работы. Чем больше, тем лучше',
+    hint: { good: 'Капитал уже заметно работает на вас.', ok: S.cats.some(c => c.passive) ? 'Это ваш путь к независимости: 100% – когда можно не работать.' : 'Отметьте источники пассивного дохода в настройках.', bad: '', na: 'За период нет расходов.' } };
   v = avgExp > 0 ? net / (avgExp * 12) : null;
-  m.years = { name: 'Капитал в годовых расходах', v, s: st(v, 5, 1), val: v == null ? '—' : dec1(v) + ' года', target: 'Сколько лет можно прожить на капитал. Около 25 — точка финансовой независимости',
-    hint: { good: 'Серьёзный запас прочности.', ok: 'Капитал растёт — продолжайте регулярно откладывать.', bad: 'Капитала меньше годовых расходов — пока вы зависите от текущего дохода.', na: 'Нет данных о расходах.' } };
+  m.years = { name: 'Капитал в годовых расходах', v, s: st(v, 5, 1), val: v == null ? '–' : dec1(v) + ' года', target: 'Сколько лет можно прожить на капитал. Около 25 – точка финансовой независимости',
+    hint: { good: 'Серьёзный запас прочности.', ok: 'Капитал растёт – продолжайте регулярно откладывать.', bad: 'Капитала меньше годовых расходов – пока вы зависите от текущего дохода.', na: 'Нет данных о расходах.' } };
   if (assetVals.length >= 2) {
     assetVals.sort((a, b) => b[1] - a[1]); v = assetVals[0][1] / as;
-    m.conc = { name: 'Крупнейший актив', v, s: st(v, .5, .7, false), val: pctf(v), target: `«${assetVals[0][0].name}» — такая доля всех активов. Ориентир — не больше половины`,
+    m.conc = { name: 'Крупнейший актив', v, s: st(v, .5, .7, false), val: pctf(v), target: `«${assetVals[0][0].name}» – такая доля всех активов. Ориентир – не больше половины`,
       hint: { good: 'Активы распределены.', ok: 'Заметная концентрация в одном активе.', bad: 'Почти всё в одной корзине: просадка этого актива ударит по всему капиталу.', na: '' } };
   }
   const start = addDays(w.from, -1), capStart = capitalAt(start).net, fl = pstats(w.from, t), change = net - capStart;
   const flow = fl.inc - fl.exp, other = change - flow - fl.rev - fl.bal;
   m.trend = { name: 'Изменение капитала', v: change, s: Math.abs(change) < 1e-9 ? 'ok' : change > 0 ? 'good' : 'bad', val: fmt(change, S.base, true), target: `С ${fmtDate(w.from)} по сегодня`,
-    hint: { good: flow > 0 && flow >= change / 2 ? 'Капитал растёт за счёт сбережений — это устойчивый рост.' : 'Капитал растёт, но в основном за счёт переоценки и курсов — такой рост может развернуться.', ok: 'Капитал не изменился.', bad: flow < 0 ? 'Капитал тает: расходы больше доходов.' : 'Капитал снизился из-за переоценки активов или курсов валют.', na: '' } };
+    hint: { good: flow > 0 && flow >= change / 2 ? 'Капитал растёт за счёт сбережений – это устойчивый рост.' : 'Капитал растёт, но в основном за счёт переоценки и курсов – такой рост может развернуться.', ok: 'Капитал не изменился.', bad: flow < 0 ? 'Капитал тает: расходы больше доходов.' : 'Капитал снизился из-за переоценки активов или курсов валют.', na: '' } };
   const W8 = { savings: 25, cushion: 20, debtload: 15, must: 10, debtassets: 10, trend: 10, years: 5, passive: 5, conc: 5 }, PT = { good: 100, ok: 60, bad: 20 };
   let sw = 0, ss = 0; for (const k in m) if (m[k].s !== 'na' && W8[k]) { sw += W8[k]; ss += W8[k] * PT[m[k].s]; }
   const score = sw ? Math.round(ss / sw) : null;
@@ -1077,7 +1126,7 @@ const PILL = { good: 'в норме', ok: 'внимание', bad: 'пробле
 function healthNeed() { const w = hWindow(UI.hWin); if (!w) return []; const d = txDates(w.from, today(), []); if (multiCur()) d.push(addDays(w.from, -1), today()); return d; }
 
 function homeHealthCard() {
-  if (!S.diag) return `<div class="card pad tap cta" data-act="diag-start"><div class="ico">🧭</div><div class="grow"><div class="b">Узнайте свою точку А</div><div class="sub">10 вопросов о ваших финансах — и план, на чём сделать упор</div></div><div class="sub">›</div></div>`;
+  if (!S.diag) return `<div class="card pad tap cta" data-act="diag-start"><div class="ico">🧭</div><div class="grow"><div class="b">Узнайте свою точку А</div><div class="sub">10 вопросов о ваших финансах – и план, на чём сделать упор</div></div><div class="sub">›</div></div>`;
   const h = health(), sg = STAGES[S.diag.stage - 1];
   return `<div class="card pad tap cta" data-act="tab" data-tab="health"><div class="ico">🧭</div><div class="grow"><div class="b">Этап ${S.diag.stage} из 6: ${sg.name}</div><div class="sub">${h && h.score != null ? 'Финансовое здоровье: ' + h.score + ' из 100' : 'Смотрите рекомендации и метрики'}</div></div><div class="sub">›</div></div>`;
 }
@@ -1096,9 +1145,9 @@ V.health = {
     } else html += homeHealthCard();
     if (!h) return html + `<div class="card empty">Метрики появятся, когда в учёте будут операции хотя бы за пару недель.<br><br><button class="btn" data-act="fab" style="max-width:260px;margin:0 auto">Добавить операцию</button></div>`;
     const sc = h.score;
-    html += `<div class="card pad scorecard"><div class="ring" style="--p:${sc || 0};--c:${scoreColor(sc || 0)}"><div class="num">${sc == null ? '—' : sc}</div></div>
+    html += `<div class="card pad scorecard"><div class="ring" style="--p:${sc || 0};--c:${scoreColor(sc || 0)}"><div class="num">${sc == null ? '–' : sc}</div></div>
       <div><div class="b" style="font-size:17px">${sc == null ? 'Мало данных' : scoreLabel(sc)}</div>
-      <div class="sub">Сводная оценка из 100 по данным учёта с ${fmtDate(h.w.from)}${h.w.partial ? '. Учёт ведётся недавно — оценка станет точнее через 1–2 месяца' : ''}</div></div></div>`;
+      <div class="sub">Сводная оценка из 100 по данным учёта с ${fmtDate(h.w.from)}${h.w.partial ? '. Учёт ведётся недавно – оценка станет точнее через 1–2 месяца' : ''}</div></div></div>`;
     const order = ['savings', 'cushion', 'debtload', 'must', 'trend', 'debtassets', 'conc', 'years', 'passive'];
     const row = k => { const x = h.m[k]; if (!x) return ''; const cls = x.s === 'good' ? 'inc' : x.s === 'bad' ? 'exp' : '';
       return `<div class="metric"><div class="mrow"><div class="grow"><div class="b">${x.name}</div><div class="sub">${esc(x.target)}</div></div>
@@ -1115,7 +1164,7 @@ V.health = {
       <div class="row"><div class="grow">Курсы валют и прочее</div><div class="r num">${fmt(s.other, B(), true)}</div></div>
       <div class="row"><div class="grow b">Итого</div><div class="r num b">${fmt(s.change, B(), true)}</div></div></div>`;
     const nLiq = S.accounts.filter(a => a.type !== 'liab' && a.liquid).length, nMust = S.cats.filter(c => c.must && !c.del).length;
-    html += `<div class="foot">Метрики опираются на отметки: ликвидных счетов — ${nLiq}, обязательных статей — ${nMust}. <button class="link" data-act="tab" data-tab="settings" style="display:inline;width:auto;padding:0">Изменить</button></div>`;
+    html += `<div class="foot">Метрики опираются на отметки: ликвидных счетов – ${nLiq}, обязательных статей – ${nMust}. <button class="link" data-act="tab" data-tab="settings" style="display:inline;width:auto;padding:0">Изменить</button></div>`;
     return html;
   }
 };
@@ -1124,7 +1173,7 @@ V.health = {
 const DQ = [
   { id: 'track', area: 'control', q: 'Как вы ведёте учёт доходов и расходов?', o: [['Никак не веду', 0], ['Иногда, урывками', 35], ['Записываю регулярно, но итоги почти не смотрю', 70], ['Записываю и разбираю итоги каждый месяц', 100]] },
   { id: 'know', area: 'control', q: 'Сколько вы тратите в месяц?', o: [['Не представляю', 0], ['Примерно, могу ошибиться на треть', 35], ['Знаю довольно точно', 70], ['Знаю точно, по статьям', 100]] },
-  { id: 'left', area: 'savings', q: 'Что обычно остаётся к концу месяца?', o: [['Ухожу в минус, приходится занимать', 0], ['Ничего — трачу всё', 20], ['До 10% дохода', 50], ['10–20% дохода', 80], ['Больше 20% дохода', 100]] },
+  { id: 'left', area: 'savings', q: 'Что обычно остаётся к концу месяца?', o: [['Ухожу в минус, приходится занимать', 0], ['Ничего – трачу всё', 20], ['До 10% дохода', 50], ['10–20% дохода', 80], ['Больше 20% дохода', 100]] },
   { id: 'cushion', area: 'protect', q: 'Если доход пропадёт, на сколько хватит сбережений при привычных тратах?', o: [['Меньше месяца', 0], ['1–3 месяца', 40], ['3–6 месяцев', 75], ['Больше 6 месяцев', 100]] },
   { id: 'risk', area: 'protect', q: 'Что будет, если вы на 2–3 месяца не сможете работать?', sub: 'Болезнь, травма, сокращение', o: [['Финансовая катастрофа', 0], ['Будет очень тяжело, придётся занимать', 30], ['Справлюсь за счёт сбережений', 75], ['Справлюсь: есть сбережения и страховка', 100]] },
   { id: 'debtload', area: 'debt', q: 'Какая часть дохода уходит на платежи по кредитам и долгам?', o: [['Долгов нет', 100], ['До 20%', 75], ['20–40%', 35], ['Больше 40%', 0]] },
@@ -1135,12 +1184,12 @@ const DQ = [
 ];
 const AREAS = [['control', 'Учёт и контроль'], ['savings', 'Сбережения'], ['protect', 'Финансовая защита'], ['debt', 'Долги'], ['goals', 'Цели'], ['growth', 'Рост капитала']];
 const STAGES = [
-  { name: 'Кризис', d: 'Расходы и долги сильнее доходов. Главная задача — остановить минус и не допускать просрочек.', next: 'Доходы покрывают расходы каждый месяц, просрочек нет.' },
-  { name: 'От зарплаты до зарплаты', d: 'Денег хватает, но запаса нет — любая неожиданность превращается в проблему или новый долг.', next: 'Вы откладываете хотя бы 5–10% дохода, подушки хватает минимум на месяц.' },
-  { name: 'Стабилизация', d: 'Что-то остаётся, но защита слабая: подушка небольшая или мешают долги.', next: 'Подушка на 3+ месяца, дорогих долгов нет, платежи по кредитам — до 20% дохода.' },
+  { name: 'Кризис', d: 'Расходы и долги сильнее доходов. Главная задача – остановить минус и не допускать просрочек.', next: 'Доходы покрывают расходы каждый месяц, просрочек нет.' },
+  { name: 'От зарплаты до зарплаты', d: 'Денег хватает, но запаса нет – любая неожиданность превращается в проблему или новый долг.', next: 'Вы откладываете хотя бы 5–10% дохода, подушки хватает минимум на месяц.' },
+  { name: 'Стабилизация', d: 'Что-то остаётся, но защита слабая: подушка небольшая или мешают долги.', next: 'Подушка на 3+ месяца, дорогих долгов нет, платежи по кредитам – до 20% дохода.' },
   { name: 'Защищённость', d: 'Подушка есть, долги под контролем. Теперь деньги должны начать работать.', next: 'Вы регулярно инвестируете 10%+ дохода по понятной стратегии.' },
-  { name: 'Рост капитала', d: 'Вы системно инвестируете. Задача — наращивать взносы, диверсифицировать и развивать пассивный доход.', next: 'Пассивный доход покрывает заметную часть расходов, капитал растёт каждый год.' },
-  { name: 'Путь к независимости', d: 'Капитал и пассивный доход начинают заменять зарплату. Главное — защищать и поддерживать систему.', next: 'Пассивный доход покрывает все расходы — финансовая независимость.' }
+  { name: 'Рост капитала', d: 'Вы системно инвестируете. Задача – наращивать взносы, диверсифицировать и развивать пассивный доход.', next: 'Пассивный доход покрывает заметную часть расходов, капитал растёт каждый год.' },
+  { name: 'Путь к независимости', d: 'Капитал и пассивный доход начинают заменять зарплату. Главное – защищать и поддерживать систему.', next: 'Пассивный доход покрывает все расходы – финансовая независимость.' }
 ];
 const activeQs = a => DQ.filter(q => !(q.skip && q.skip(a)));
 function stageOf(a) {
@@ -1158,39 +1207,39 @@ function areaScores(a) {
   return r;
 }
 const RECS = [
-  { id: 'overdue', when: a => a.debtbad === 2, title: 'Закрыть просрочки', why: 'Просрочки добавляют штрафы и портят кредитную историю — это самый дорогой вид долга.',
-    steps: ['Выпишите все долги: сумма, ставка, минимальный платёж, дата', 'Свяжитесь с кредиторами: реструктуризацию или отсрочку часто дают, если прийти до суда', 'Платите минимумы по всем долгам, всё сверх — на самый дорогой'],
+  { id: 'overdue', when: a => a.debtbad === 2, title: 'Закрыть просрочки', why: 'Просрочки добавляют штрафы и портят кредитную историю – это самый дорогой вид долга.',
+    steps: ['Выпишите все долги: сумма, ставка, минимальный платёж, дата', 'Свяжитесь с кредиторами: реструктуризацию или отсрочку часто дают, если прийти до суда', 'Платите минимумы по всем долгам, всё сверх – на самый дорогой'],
     app: 'Заведите каждый долг как обязательство, а платежи проводите переводом на него. Долговая нагрузка и остаток долга будут видны на экране «Здоровье».', act: ['acc-liab', 'Добавить долг'] },
   { id: 'deficit', when: a => a.left <= 1, title: a => a.left === 0 ? 'Выйти из минуса' : 'Начать откладывать', why: a => a.left === 0 ? 'Пока расходы больше доходов, долг растёт сам собой. Нужно найти, куда утекают деньги.' : 'Без сбережений любая поломка или болезнь превращается в кредит.',
     steps: ['Месяц записывайте абсолютно все траты', 'Найдите 2–3 статьи, которые можно сократить на 10–20%', 'Откладывайте в день дохода, а не то, что останется. Начните с 5%'],
-    app: 'Статистика покажет, куда уходят деньги, план — поставит лимиты по статьям, а норма сбережений на экране «Здоровье» — получилось ли.', act: ['goto-stats', 'Открыть статистику'] },
+    app: 'Статистика покажет, куда уходят деньги, план – поставит лимиты по статьям, а норма сбережений на экране «Здоровье» – получилось ли.', act: ['goto-stats', 'Открыть статистику'] },
   { id: 'control', when: (a, sc) => sc.control < 60, title: 'Навести учёт', why: 'Без цифр решения принимаются наугад. Уже через месяц учёта обычно видно, куда уходит 20–30% денег.',
-    steps: ['Добавьте все счета, карты и долги с текущими остатками', 'Записывайте траты сразу — это 10 секунд', 'Раз в неделю сверяйте остатки операцией «Остаток»'],
-    app: 'Кнопка «+» — ввод за пару касаний, в сумме можно писать выражения вроде 350+120. В конце месяца открывайте статистику за месяц.', act: ['add-op', 'Добавить операцию'] },
+    steps: ['Добавьте все счета, карты и долги с текущими остатками', 'Записывайте траты сразу – это 10 секунд', 'Раз в неделю сверяйте остатки операцией «Остаток»'],
+    app: 'Кнопка «+» – ввод за пару касаний, в сумме можно писать выражения вроде 350+120. В конце месяца открывайте статистику за месяц.', act: ['add-op', 'Добавить операцию'] },
   { id: 'cushion', when: a => a.cushion <= 1, title: 'Собрать финансовую подушку', why: 'Подушка превращает неприятности в неудобства. Без неё любая непредвиденная трата ведёт к долгам.',
-    steps: ['Первая цель — 1 месяц обязательных расходов, затем 3, затем 6', 'Держите подушку на отдельном счёте или вкладе, а не на основной карте', 'Пополняйте в день дохода, фиксированной суммой'],
-    app: 'Создайте отдельный счёт «Подушка» с отметкой «Ликвидный» — экран «Здоровье» посчитает, на сколько месяцев её хватит и сколько не хватает до 3 месяцев.', act: ['acc-asset', 'Создать счёт «Подушка»'] },
-  { id: 'debt', when: a => a.debtbad === 1 || a.debtload >= 2, title: 'Снизить долговую нагрузку', why: 'Проценты — чистые потери. Когда на кредиты уходит больше 20% дохода, копить почти невозможно.',
-    steps: ['Не берите новых потребительских кредитов и рассрочек', 'Гасите досрочно самый дорогой долг, по остальным — минимальные платежи', 'Проверьте, можно ли рефинансировать под меньшую ставку'],
-    app: 'Проценты записывайте в статью с отметкой «Платёж по долгу», погашение — переводом на счёт долга. Нагрузка и доля долга в активах — на экране «Здоровье».', act: ['acc-liab', 'Добавить кредит'] },
+    steps: ['Первая цель – 1 месяц обязательных расходов, затем 3, затем 6', 'Держите подушку на отдельном счёте или вкладе, а не на основной карте', 'Пополняйте в день дохода, фиксированной суммой'],
+    app: 'Создайте отдельный счёт «Подушка» с отметкой «Ликвидный» – экран «Здоровье» посчитает, на сколько месяцев её хватит и сколько не хватает до 3 месяцев.', act: ['acc-asset', 'Создать счёт «Подушка»'] },
+  { id: 'debt', when: a => a.debtbad === 1 || a.debtload >= 2, title: 'Снизить долговую нагрузку', why: 'Проценты – чистые потери. Когда на кредиты уходит больше 20% дохода, копить почти невозможно.',
+    steps: ['Не берите новых потребительских кредитов и рассрочек', 'Гасите досрочно самый дорогой долг, по остальным – минимальные платежи', 'Проверьте, можно ли рефинансировать под меньшую ставку'],
+    app: 'Проценты записывайте в статью с отметкой «Платёж по долгу», погашение – переводом на счёт долга. Нагрузка и доля долга в активах – на экране «Здоровье».', act: ['acc-liab', 'Добавить кредит'] },
   { id: 'protect', when: a => a.risk <= 1 && a.cushion >= 2, title: 'Застраховать крупные риски', why: 'Подушка закрывает мелкие неприятности, но не долгую болезнь или потерю трудоспособности.',
-    steps: ['Оцените, что будет с доходом семьи, если вы полгода не сможете работать', 'Изучите страхование жизни и здоровья, при необходимости — имущества', 'Если доход в семье один, держите подушку на 6 месяцев и больше'],
+    steps: ['Оцените, что будет с доходом семьи, если вы полгода не сможете работать', 'Изучите страхование жизни и здоровья, при необходимости – имущества', 'Если доход в семье один, держите подушку на 6 месяцев и больше'],
     app: 'Добавьте статью «Страхование» с отметкой «Обязательный расход» и заложите взносы в план.', act: ['goto-plan', 'Открыть план'] },
   { id: 'goals', when: a => a.goals <= 1, title: 'Сформулировать цели', why: 'Цель с суммой и сроком превращает «надо бы копить» в понятный ежемесячный взнос.',
-    steps: ['Запишите 1–3 цели: сумма и срок', 'Разделите сумму на число месяцев — это ваш ежемесячный взнос', 'Под крупную цель заведите отдельный счёт'],
-    app: 'Создайте счёт под цель и переводите на него взнос. Остаток на счёте покажет прогресс, график капитала — общий рост.', act: ['acc-asset', 'Создать счёт под цель'] },
-  { id: 'invest', when: a => a.invest <= 1 && a.cushion >= 2 && (a.debtbad || 0) === 0, title: 'Начать инвестировать системно', why: 'Деньги на карте теряют в цене из-за инфляции. Регулярные вложения на длинном горизонте — основной способ роста капитала.',
+    steps: ['Запишите 1–3 цели: сумма и срок', 'Разделите сумму на число месяцев – это ваш ежемесячный взнос', 'Под крупную цель заведите отдельный счёт'],
+    app: 'Создайте счёт под цель и переводите на него взнос. Остаток на счёте покажет прогресс, график капитала – общий рост.', act: ['acc-asset', 'Создать счёт под цель'] },
+  { id: 'invest', when: a => a.invest <= 1 && a.cushion >= 2 && (a.debtbad || 0) === 0, title: 'Начать инвестировать системно', why: 'Деньги на карте теряют в цене из-за инфляции. Регулярные вложения на длинном горизонте – основной способ роста капитала.',
     steps: ['Выберите сумму: например, 10% дохода каждый месяц', 'Распределите вложения между разными активами и валютами', 'Не вкладывайте в рискованные активы деньги, которые понадобятся в ближайший год'],
     app: 'Заведите инвестиционные счета как активы и раз в месяц обновляйте их стоимость «Переоценкой». «Здоровье» покажет концентрацию в одном активе и откуда растёт капитал.', act: ['acc-asset', 'Добавить инвестсчёт'] },
-  { id: 'income', when: a => a.income <= 1, title: 'Укрепить доход', why: 'Один источник дохода — главная точка уязвимости: его потеря обнуляет весь бюджет.',
+  { id: 'income', when: a => a.income <= 1, title: 'Укрепить доход', why: 'Один источник дохода – главная точка уязвимости: его потеря обнуляет весь бюджет.',
     steps: ['Вкладывайтесь в навыки, которые повышают стоимость вашего часа', 'Подумайте о втором источнике: подработка, проекты, аренда', 'Постепенно наращивайте пассивный доход: проценты, дивиденды'],
-    app: 'Добавьте источники дохода и отметьте пассивные — приложение покажет, какую долю расходов они покрывают.', act: ['goto-settings', 'Настроить источники'] },
+    app: 'Добавьте источники дохода и отметьте пассивные – приложение покажет, какую долю расходов они покрывают.', act: ['goto-settings', 'Настроить источники'] },
   { id: 'diversify', when: a => a.invest >= 2, title: 'Диверсифицировать и наращивать', why: 'Система работает. Теперь важны размер взносов, распределение рисков и рост пассивного дохода.',
     steps: ['Раз в полгода пересматривайте распределение активов', 'Увеличивайте взнос вместе с ростом дохода', 'Реинвестируйте пассивный доход'],
     app: 'Метрика «Крупнейший актив» подскажет, если капитал слишком сосредоточен в одном месте, а «Капитал в годовых расходах» покажет путь к независимости.', act: ['goto-health', 'Открыть метрики'] },
-  { id: 'review', when: () => true, title: 'Поддерживать систему', why: 'Хорошие финансы — это привычка: регулярный учёт и пересмотр плана.',
+  { id: 'review', when: () => true, title: 'Поддерживать систему', why: 'Хорошие финансы – это привычка: регулярный учёт и пересмотр плана.',
     steps: ['Раз в месяц сравнивайте план и факт', 'Раз в квартал проходите диагностику заново', 'Обновляйте цели по мере их достижения'],
-    app: 'План и факт — на вкладке «План», динамика — на экране «Здоровье».', act: ['goto-plan', 'Открыть план'] }
+    app: 'План и факт – на вкладке «План», динамика – на экране «Здоровье».', act: ['goto-plan', 'Открыть план'] }
 ];
 const val_ = (x, a) => typeof x === 'function' ? x(a) : x;
 function recsFor(a) { const sc = areaScores(a); return RECS.filter(r => r.when(a, sc)).map(r => Object.assign({}, r, { title: val_(r.title, a), why: val_(r.why, a) })); }
@@ -1215,17 +1264,17 @@ V.diagres = {
       <div class="card pad"><div class="sub">Этап ${stg} из 6</div><div class="stage">${sg.name}</div>
         <div class="ladder">${STAGES.map((x, i) => `<i class="${i + 1 < stg ? 'on' : i + 1 === stg ? 'cur' : ''}"></i>`).join('')}</div>
         <div>${sg.d}</div></div>`;
-    if (stg < 6) html += `<div class="card pad"><div class="sub">Точка Б — следующий этап</div><div class="b" style="font-size:17px;margin:2px 0 4px">${STAGES[stg].name}</div><div>${sg.next}</div></div>`;
-    if (hist.length > 1) { const pr = hist[hist.length - 2]; html += `<div class="foot">Прошлая диагностика ${fmtDate(pr.d)}: этап ${pr.s} «${STAGES[pr.s - 1].name}»${stg > pr.s ? ' — вы продвинулись.' : stg < pr.s ? ' — сейчас ситуация сложнее.' : ' — этап не изменился.'}</div>`; }
+    if (stg < 6) html += `<div class="card pad"><div class="sub">Точка Б – следующий этап</div><div class="b" style="font-size:17px;margin:2px 0 4px">${STAGES[stg].name}</div><div>${sg.next}</div></div>`;
+    if (hist.length > 1) { const pr = hist[hist.length - 2]; html += `<div class="foot">Прошлая диагностика ${fmtDate(pr.d)}: этап ${pr.s} «${STAGES[pr.s - 1].name}»${stg > pr.s ? ' – вы продвинулись.' : stg < pr.s ? ' – сейчас ситуация сложнее.' : ' – этап не изменился.'}</div>`; }
     html += `<div class="h1">Профиль по направлениям</div><div class="card">${AREAS.map(([k, n]) => { const v = sc[k], c = v >= 75 ? COL.inc : v >= 45 ? 'var(--warn)' : COL.exp;
       return `<div class="row"><div class="grow"><div>${n}</div><div class="bar"><i style="width:${Math.max(v, 3)}%;background:${c}"></i></div></div><div class="r num b" style="width:44px">${v}</div></div>`; }).join('')}</div>`;
     const h = health();
     if (h && !h.w.partial) {
-      const lab = id => { const q = DQ.find(x => x.id === id); return a[id] == null ? '—' : q.o[a[id]][0]; };
+      const lab = id => { const q = DQ.find(x => x.id === id); return a[id] == null ? '–' : q.o[a[id]][0]; };
       const line = (n, ans, k) => h.m[k] && h.m[k].s !== 'na' ? `<div>${n}</div><div class="sub">${esc(ans)}</div><div class="num b">${h.m[k].val}</div>` : '';
       const rows = line('Остаётся от дохода', lab('left'), 'savings') + line('Подушка', lab('cushion'), 'cushion') + line('Платежи по долгам', lab('debtload'), 'debtload');
       if (rows) html += `<div class="h1">Сверка с учётом</div><div class="card pad"><div class="cmp"><div></div><div class="sub">ваш ответ</div><div class="sub">по учёту</div>${rows}</div>
-        <div class="sub" style="margin-top:10px">Если цифры расходятся с ответами, ориентируйтесь на учёт — он точнее ощущений.</div></div>`;
+        <div class="sub" style="margin-top:10px">Если цифры расходятся с ответами, ориентируйтесь на учёт – он точнее ощущений.</div></div>`;
     }
     html += `<div class="h1">На чём сделать упор</div>`;
     recs.slice(0, 3).forEach((r, i) => {
@@ -1276,9 +1325,318 @@ ACT['restore-backup'] = async () => {
   try { localStorage.setItem(BACKUP, JSON.stringify({ at: Date.now(), data: cur })); } catch (e) {}
   toast('Копия восстановлена'); render();
 };
+
+/* ================= Семейный бюджет ================= */
+// Общие счета хранятся на сервере семьи (Cloudflare Worker, адрес – FAMILY_API в начале файла).
+// Личные счета и операции по ним на сервер не отправляются.
+const FAM = { err: '', busy: false, loading: false };
+const myId = () => { try { return (tg.initDataUnsafe.user || {}).id || 0; } catch (e) { return 0; } };
+const myName = () => { try { const u = tg.initDataUnsafe.user; return [u.first_name, u.last_name].filter(Boolean).join(' ') || 'Участник'; } catch (e) { return 'Участник'; } };
+const famAvail = () => !!(FAMILY_API && tg && tg.initData);
+const inFam = () => !!(S.fam && S.fam.hid);
+const famReady = () => famAvail() && inFam();
+const memberName = uid => { if (uid && uid === myId()) return 'вы'; const m = S.fam && (S.fam.members || []).find(x => x.uid === uid); return m ? m.name : 'участник семьи'; };
+const sharedSet = () => new Set(S.accounts.filter(a => a.sh).map(a => a.id));
+const touchesShared = t => { const sh = sharedSet(); return sh.has(t.a) || !!(t.a2 && sh.has(t.a2)); };
+const famBadge = a => a.sh ? ` <span class="badge">👥 общий${a.owner && a.owner !== myId() ? ' · ' + esc(memberName(a.owner)) : ''}</span>` : '';
+const FAM_ERR = { auth: 'Telegram не подтвердил вход – перезапустите приложение', already_member: 'Вы уже состоите в семье', bad_code: 'Код не найден или истёк', not_member: 'Вы больше не участник семьи', server_not_configured: 'Сервер не настроен: проверьте BOT_TOKEN и базу D1', 'Failed to fetch': 'нет связи с сервером' };
+const famErrText = e => FAM_ERR[e] || e;
+
+async function api(path, body) {
+  const c = new AbortController(), tm = setTimeout(() => c.abort(), 15000);
+  try {
+    const r = await fetch(FAMILY_API.replace(/\/+$/, '') + path, { method: 'POST', signal: c.signal, headers: { 'Content-Type': 'application/json', 'X-Init-Data': tg.initData }, body: JSON.stringify(body || {}) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.error) throw new Error(j.error || 'HTTP ' + r.status);
+    return j;
+  } catch (e) { throw new Error(e.name === 'AbortError' ? 'Failed to fetch' : e.message); }
+  finally { clearTimeout(tm); }
+}
+
+/* ---- Очередь изменений ---- */
+let famSoonT;
+function famSoon() { clearTimeout(famSoonT); famSoonT = setTimeout(famSync, 700); }
+function famQueue(op) { if (!inFam()) return; (S.outbox = S.outbox || []).push(op); famSoon(); }
+function txOut(t) {
+  const sh = sharedSet();
+  const o = { id: t.id, t: t.t, d: t.d, ts: t.ts, by: t.by || myId(), a: sh.has(t.a) ? t.a : '' };
+  if (t.a2) o.a2 = sh.has(t.a2) ? t.a2 : '';
+  ['amt', 'amt2', 'nb', 'n'].forEach(k => { if (t[k] != null) o[k] = t[k]; });
+  if (t.c) { o.c = t.c; const c = catById(t.c); if (c) o.cat = { name: c.name, icon: c.icon, kind: c.kind, must: !!c.must, debt: !!c.debt, passive: !!c.passive }; }
+  return o;
+}
+const accOut = a => ({ id: a.id, name: a.name, icon: a.icon, type: a.type, cur: a.cur, init: a.init, liquid: !!a.liquid });
+function famAfterTx(t, prev) {
+  if (!inFam()) return;
+  if (touchesShared(t)) { t.sh = 1; t.by = (prev && prev.by) || myId(); famQueue({ k: 'tx', tx: txOut(t) }); }
+  else if (prev && prev.sh) { delete t.sh; famQueue({ k: 'txdel', id: t.id }); }
+}
+function famAfterDel(t) { if (inFam() && t.sh) famQueue({ k: 'txdel', id: t.id }); }
+function famAfterAcc(a, wantShare) {
+  if (!inFam() || (a.sh && a.owner && a.owner !== myId())) return;
+  if (wantShare) {
+    const first = !a.sh; a.sh = S.fam.hid; a.owner = myId();
+    famQueue({ k: 'acc', acc: accOut(a) });
+    if (first) S.tx.forEach(t => { if (t.a === a.id || t.a2 === a.id) { t.sh = 1; t.by = t.by || myId(); famQueue({ k: 'tx', tx: txOut(t) }); } });
+  } else if (a.sh) {
+    famQueue({ k: 'accdel', id: a.id }); delete a.sh; delete a.owner;
+    S.tx.forEach(t => { if ((t.a === a.id || t.a2 === a.id) && t.sh) { if (touchesShared(t)) famQueue({ k: 'tx', tx: txOut(t) }); else delete t.sh; } });
+  }
+}
+
+/* ---- Приём изменений от семьи ---- */
+function localCat(remoteId, snap) {
+  if (catById(remoteId)) return remoteId;
+  if (!snap) return remoteId;
+  const nm = String(snap.name || '').trim().toLowerCase();
+  const same = S.cats.find(c => c.kind === snap.kind && c.name.trim().toLowerCase() === nm);
+  if (same) { if (same.del) delete same.del; return same.id; }
+  S.cats.push({ id: remoteId, name: snap.name || 'Статья', icon: snap.icon || '', kind: snap.kind, must: !!snap.must, debt: !!snap.debt, passive: !!snap.passive });
+  return remoteId;
+}
+function removeSharedAccount(id) {
+  S.accounts = S.accounts.filter(a => a.id !== id);
+  S.tx = S.tx.filter(t => { if (t.a !== id && t.a2 !== id) return true; const other = t.a === id ? t.a2 : t.a; return !!(other && accById(other)); });
+}
+function famMerge(r) {
+  let ch = false;
+  const my = myId();
+  const mem = JSON.stringify(r.members || []);
+  if (mem !== JSON.stringify(S.fam.members || [])) { S.fam.members = r.members || []; ch = true; }
+  S.fam.since = r.now;
+  for (const x of r.accounts || []) {
+    const loc = accById(x.id);
+    if (x.del) {
+      if (!loc || !loc.sh) continue;
+      if (x.owner === my) { delete loc.sh; delete loc.owner; } else removeSharedAccount(x.id);
+      ch = true; continue;
+    }
+    let d; try { d = JSON.parse(x.data); } catch (e) { continue; }
+    if (loc) {
+      if (x.owner !== my) Object.assign(loc, { name: d.name, icon: d.icon, type: d.type, cur: d.cur, init: d.init });
+      if (loc.sh !== r.hid || loc.owner !== x.owner) { loc.sh = r.hid; loc.owner = x.owner; }
+    } else S.accounts.push({ id: x.id, name: d.name, icon: d.icon, type: d.type, cur: d.cur, init: d.init, liquid: !!d.liquid, sh: r.hid, owner: x.owner });
+    ch = true;
+  }
+  for (const x of r.tx || []) {
+    const i = S.tx.findIndex(t => t.id === x.id);
+    if (x.del) {
+      if (i < 0) continue;
+      const loc = S.tx[i], mine = [loc.a, loc.a2].some(id => { const ac = id && accById(id); return ac && !ac.sh; });
+      if (mine) { if (loc.sh) { delete loc.sh; ch = true; } } else { S.tx.splice(i, 1); ch = true; }
+      continue;
+    }
+    let d; try { d = JSON.parse(x.data); } catch (e) { continue; }
+    const loc = i >= 0 ? S.tx[i] : null;
+    const t = Object.assign({}, d, { sh: 1 }); delete t.cat;
+    if (loc) { if (!t.a && loc.a) t.a = loc.a; if (t.a2 === '' && loc.a2) t.a2 = loc.a2; } // свои личные счета не теряем
+    if (!accById(t.a) && !(t.a2 && accById(t.a2))) { if (i >= 0) { S.tx.splice(i, 1); ch = true; } continue; } // счёт больше не общий
+    if (d.c) t.c = localCat(d.c, d.cat);
+    if (loc && JSON.stringify(loc) === JSON.stringify(t)) continue;
+    if (i >= 0) S.tx[i] = t; else S.tx.push(t);
+    ch = true;
+  }
+  return ch;
+}
+function famDropLocal() {
+  const my = myId();
+  S.accounts.filter(a => a.sh && a.owner !== my).map(a => a.id).forEach(removeSharedAccount);
+  S.accounts.forEach(a => { delete a.sh; delete a.owner; });
+  S.tx.forEach(t => { delete t.sh; });
+  S.fam = null; S.outbox = [];
+}
+async function famSync() {
+  if (!famReady() || FAM.busy) return;
+  FAM.busy = true;
+  let changed = false, sent = 0;
+  const hadErr = FAM.err;
+  try {
+    for (let loop = 0; loop < 40; loop++) {
+      const ops = (S.outbox || []).slice(0, 30);
+      const r = await api('/sync', { since: S.fam.since || 0, ops });
+      S.outbox.splice(0, ops.length); sent += ops.length;
+      if (famMerge(r)) changed = true;
+      if (!S.outbox.length) break;
+    }
+    FAM.err = '';
+  } catch (e) {
+    FAM.err = e.message;
+    if (e.message === 'not_member') { famDropLocal(); changed = true; toast('Вы больше не участник семьи – общие счета скрыты'); }
+  } finally { FAM.busy = false; }
+  if (changed || sent) persist();
+  if (changed || hadErr !== FAM.err) { if (UI.tab !== 'diag') draw(); }
+}
+
+/* ---- Интерфейс ---- */
+function famCard() {
+  let body;
+  if (!FAMILY_API) body = `<div class="sub" style="padding:12px 0">Семейный бюджет не подключён: нужен сервер семьи и его адрес в строке FAMILY_API файла index.html.</div>`;
+  else if (!(tg && tg.initData)) body = `<div class="sub" style="padding:12px 0">Семейный бюджет работает только внутри Telegram.</div>`;
+  else if (!inFam()) body = `<div class="sub" style="padding:12px 0 4px">Ведите общие счета с супругом или супругой. Общими станут только счета, которые вы сами отметите, – остальные счета и операции по ним видите только вы.</div>
+      <button class="link" data-act="fam-create">${FAM.loading ? 'Создаю…' : '＋ Создать семью и пригласить'}</button><button class="link" data-act="fam-join-open">Присоединиться по коду</button>`;
+  else {
+    const ms = S.fam.members || [], shared = S.accounts.filter(a => a.sh), q = (S.outbox || []).length;
+    body = ms.map(m => `<div class="row"><div class="ico">${m.uid === myId() ? '🙂' : '👤'}</div><div class="grow t">${esc(m.name)}${m.uid === myId() ? ' <span class="sub">– вы</span>' : ''}</div></div>`).join('')
+      + `<div class="sub" style="padding:10px 0 2px">${shared.length ? 'Общие счета: ' + shared.map(a => esc(a.name)).join(', ') + '.' : 'Общих счетов пока нет. Откройте счёт и включите «Общий семейный счёт».'}`
+      + `${q ? `<br>Ожидают отправки: ${q}` : ''}${FAM.err ? `<br><span class="exp">Ошибка синхронизации: ${esc(famErrText(FAM.err))}</span>` : ''}</div>`
+      + `<button class="link" data-act="fam-invite">＋ Пригласить участника</button><button class="link" data-act="fam-sync">${FAM.busy ? 'Синхронизирую…' : 'Синхронизировать сейчас'}</button><button class="link" data-act="fam-leave" style="color:var(--exp)">Покинуть семью</button>`;
+  }
+  return `<div class="h1">Семейный бюджет</div><div class="card">${body}</div>`;
+}
+function famAccBlock() {
+  if (AF.type === 'liab' && !famReady()) return '';
+  if (!famReady()) return '';
+  if (AF.id && AF.sh && AF.owner && AF.owner !== myId()) return `<div class="inset">👥 Общий счёт семьи. Владелец – ${esc(memberName(AF.owner))}. Операции по нему можно добавлять, а менять и удалять сам счёт может только владелец.</div>`;
+  return toggle('af', 'share', AF.share, 'Общий семейный счёт', 'Счёт и все операции по нему увидят участники семьи. Остальные ваши счета останутся личными');
+}
+const famAccLocked = () => !!(AF && AF.id && AF.sh && AF.owner && AF.owner !== myId());
+function openInvite(code) {
+  openSheet('inv', `<div class="stitle">Приглашение в семью</div>
+    <div class="sub" style="margin:-6px 2px 14px">Отправьте код супругу или супруге. В приложении: Настройки → Семейный бюджет → «Присоединиться по коду». Код действует 7 дней и подходит одному человеку.</div>
+    <div class="inset" style="text-align:center;padding:16px"><div class="num" style="font-size:34px;font-weight:700;letter-spacing:.2em">${esc(code)}</div></div>
+    <button class="btn" data-act="fam-copy" data-code="${esc(code)}">Скопировать приглашение</button>`);
+}
+function openJoin() {
+  openSheet('join', `<div class="stitle">Присоединиться к семье</div>
+    ${field('Код приглашения', '<input id="famcode" maxlength="8" autocomplete="off" autocapitalize="characters" placeholder="Например, K7M2QX" style="text-transform:uppercase;letter-spacing:.14em;font-size:20px">')}
+    <button class="btn" data-act="fam-join">Присоединиться</button>
+    <div class="foot">Вы увидите общие счета семьи. Ваши остальные счета останутся личными – их никто, кроме вас, не увидит.</div>`);
+}
+async function famRestoreState() {
+  const r = await api('/family/state');
+  S.fam = { hid: r.hid, members: r.members, since: 0 }; S.outbox = [];
+  persist(); await famSync(); render();
+  toast('Семья восстановлена');
+}
+Object.assign(ACT, {
+  'fam-create': async () => {
+    if (FAM.loading) return; FAM.loading = true; draw();
+    try {
+      const r = await api('/family/create', { name: myName() });
+      S.fam = { hid: r.hid, members: r.members, since: 0 }; S.outbox = [];
+      persist(); render(); openInvite(r.code);
+    } catch (e) {
+      if (e.message === 'already_member') { try { await famRestoreState(); } catch (x) { toast(famErrText(x.message)); } }
+      else toast(famErrText(e.message));
+    } finally { FAM.loading = false; if (UI.tab === 'settings') draw(); }
+  },
+  'fam-join-open': () => openJoin(),
+  'fam-join': async el => {
+    const code = ($('#famcode').value || '').trim(); if (code.length < 4) return toast('Введите код');
+    el.textContent = 'Подключаю…';
+    try {
+      const r = await api('/family/join', { code, name: myName() });
+      S.fam = { hid: r.hid, members: r.members, since: 0 }; S.outbox = [];
+      persist(); closeSheet(true); await famSync(); render();
+      toast('Вы в семье! Общие счета появятся на главном экране');
+    } catch (e) {
+      el.textContent = 'Присоединиться';
+      if (e.message === 'already_member') { try { closeSheet(true); await famRestoreState(); } catch (x) { toast(famErrText(x.message)); } }
+      else toast(famErrText(e.message));
+    }
+  },
+  'fam-invite': async () => { try { const r = await api('/family/invite'); openInvite(r.code); } catch (e) { toast(famErrText(e.message)); } },
+  'fam-copy': async el => {
+    const text = `Присоединяйся к нашему семейному бюджету в «Точке Б»: открой приложение → Настройки → Семейный бюджет → «Присоединиться по коду» и введи код ${el.dataset.code}`;
+    try { await navigator.clipboard.writeText(text); toast('Приглашение скопировано – отправьте его в чат'); }
+    catch (e) { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); toast('Приглашение скопировано'); }
+  },
+  'fam-sync': async () => { await famSync(); toast(FAM.err ? famErrText(FAM.err) : 'Синхронизировано'); draw(); },
+  'fam-leave': async () => {
+    if (!(await ask('Покинуть семью? Общие счета других участников исчезнут из вашего приложения, а ваши общие счета снова станут личными.'))) return;
+    try { await api('/family/leave'); } catch (e) { if (e.message !== 'not_member') return toast(famErrText(e.message)); }
+    famDropLocal(); persist(); render(); toast('Вы покинули семью');
+  }
+});
+
+/* ================= Политика конфиденциальности и авторство ================= */
+const policyHtml = () => `<h2>1. Кто мы</h2>
+<p>«Точка Б» – приложение для учёта личных финансов, которое работает внутри Telegram (Telegram Mini App) через Telegram-бота. Автор и правообладатель приложения – ${esc(AUTHOR_NAME)} (далее – «автор»). Связаться с автором: ${esc(AUTHOR_CONTACT)}.</p>
+<p>Используя приложение, вы соглашаетесь с этой политикой. Если вы не согласны, не используйте приложение и удалите свои данные (раздел 8).</p>
+<h2>2. Какие данные обрабатываются</h2>
+<ul>
+<li><b>Данные, которые вы вводите сами:</b> счета и их остатки, доходы, расходы, переводы, переоценки, статьи, планы, комментарии к операциям, ответы на вопросы финансовой диагностики, настройки.</li>
+<li><b>Данные Telegram:</b> числовой идентификатор вашего аккаунта, имя и фамилия из профиля. Они используются только для семейного бюджета – чтобы подтвердить, что запрос отправили именно вы, и показать ваше имя участникам семьи.</li>
+<li><b>Технические данные:</b> даты, на которые приложение запрашивает курсы валют.</li>
+</ul>
+<p>Приложение <b>не собирает</b> номера банковских карт и счетов, пароли, паспортные данные, геолокацию, контакты и файлы с устройства. В приложении нет рекламы, счётчиков аналитики и трекеров. Не вводите в комментарии к операциям конфиденциальные сведения: номера карт, пароли, коды.</p>
+<h2>3. Где хранятся данные</h2>
+<ul>
+<li><b>На вашем устройстве</b> – во внутреннем хранилище Telegram. Здесь хранятся все ваши данные приложения.</li>
+<li><b>В облачном хранилище Telegram (Telegram Cloud Storage)</b> – копия ваших данных для синхронизации между вашими устройствами. Хранилище привязано к вашему аккаунту Telegram и этому боту, прочитать его может только приложение, открытое из вашего аккаунта.</li>
+<li><b>На сервере семейного бюджета (Cloudflare)</b> – только если вы вступили в семью: общие семейные счета и операции по ним, идентификаторы и имена участников семьи. Личные счета и операции по ним на сервер не передаются. При переводе между личным и общим счётом на сервер попадают только сумма и сторона общего счёта – название и остаток личного счёта не передаются.</li>
+<li><b>На GitHub</b> хранится только программный код приложения, ваших данных там нет.</li>
+</ul>
+<p>Курсы валют загружаются из открытого источника через сети jsDelivr и Cloudflare. При этом передаётся только дата, никаких ваших данных.</p>
+<h2>4. Для чего используются данные</h2>
+<p>Только для работы приложения: учёта, расчёта статистики, капитала, плана, метрик финансового здоровья и рекомендаций, синхронизации между вашими устройствами и ведения общего семейного бюджета. Данные не используются для рекламы и профилирования и не продаются.</p>
+<h2>5. Кто имеет доступ</h2>
+<ul>
+<li><b>Вы</b> – ко всем своим данным.</li>
+<li><b>Участники вашей семьи</b> – только к счетам, отмеченным как общие, и операциям по ним.</li>
+<li><b>Автор</b> как администратор сервера семейного бюджета технически имеет доступ к данным общих семейных счетов. Автор не просматривает и не использует эти данные, кроме случаев, когда это нужно для устранения неполадок по вашему запросу или по требованию закона. К личным счетам, которые хранятся на устройстве и в облаке Telegram, у автора доступа нет.</li>
+<li><b>Поставщики инфраструктуры</b> – Telegram, Cloudflare, GitHub – обрабатывают данные в объёме, необходимом для работы их сервисов, по своим политикам конфиденциальности.</li>
+</ul>
+<p>Автор не передаёт данные третьим лицам, кроме случаев, прямо предусмотренных законом.</p>
+<h2>6. Передача данных в другие страны</h2>
+<p>Серверы Telegram, Cloudflare и GitHub могут находиться за пределами страны вашего проживания. Используя приложение, вы соглашаетесь с такой трансграничной передачей данных.</p>
+<h2>7. Защита данных</h2>
+<ul>
+<li>Все данные передаются по защищённому протоколу HTTPS.</li>
+<li>Каждый запрос к серверу семейного бюджета проверяется криптографической подписью Telegram, поэтому выдать себя за другого пользователя нельзя.</li>
+<li>Секретный ключ бота хранится только на сервере и не содержится в коде приложения.</li>
+<li>Telegram и Cloudflare хранят данные в зашифрованном виде своими средствами. Сквозного (end-to-end) шифрования в приложении нет.</li>
+</ul>
+<p>Ни один способ хранения не даёт абсолютной защиты. Рекомендуем включить код-пароль в Telegram и время от времени делать резервную копию (Настройки → Данные → Экспорт в JSON).</p>
+<h2>8. Сроки хранения и удаление</h2>
+<ul>
+<li>Данные на устройстве и в облаке Telegram хранятся, пока вы их не удалите. Кнопка «Удалить все данные» в настройках очищает данные на устройстве, в облаке Telegram и резервную копию, а если вы состоите в семье – выводит вас из неё.</li>
+<li>При выходе из семьи ваши общие счета перестают быть общими, их данные и операции по ним удаляются с сервера. Когда семью покидает последний участник, все данные семьи удаляются с сервера полностью.</li>
+<li>Содержимое удалённых операций и счетов стирается с сервера сразу. В базе остаётся только служебная отметка без содержимого – она нужна, чтобы удаление дошло до устройств других участников.</li>
+<li>В резервных копиях базы данных Cloudflare удалённые данные могут храниться до 30 дней, после чего удаляются автоматически.</li>
+<li>Вы можете в любой момент написать автору и попросить удалить ваши данные с сервера.</li>
+</ul>
+<h2>9. Ваши права</h2>
+<p>Вы можете получить свои данные (экспорт в JSON), исправить их в приложении, удалить их, отозвать согласие на обработку – прекратить использование приложения и удалить данные, а также обратиться к автору с вопросом или жалобой либо в уполномоченный орган по защите персональных данных своей страны.</p>
+<h2>10. Возрастные ограничения</h2>
+<p>Приложение не предназначено для лиц младше 16 лет.</p>
+<h2>11. Изменения политики</h2>
+<p>Автор может обновлять эту политику. Новая редакция действует с момента публикации в приложении, дата редакции указана в начале документа. О существенных изменениях автор постарается сообщить в приложении или в боте.</p>
+<h2>12. Контакты</h2>
+<p>${esc(AUTHOR_NAME)}, ${esc(AUTHOR_CONTACT)}.</p>
+`;
+const aboutHtml = () => `<p>«Точка Б» – учёт личных финансов, капитал и путь к финансовой цели.</p>
+<h2>Авторские права</h2>
+<p><b>© 2026 ${esc(AUTHOR_NAME)}. Все права защищены.</b></p>
+<p>Приложение «Точка Б», включая программный код, дизайн интерфейса, название, логотип, методику финансовой диагностики, тексты и рекомендации, является объектом авторского права. Автор и единственный правообладатель – ${esc(AUTHOR_NAME)}.</p>
+<p>Без письменного разрешения автора запрещено копировать, изменять, распространять, публиковать и продавать приложение или его части, а также использовать его код, дизайн, название и логотип в других продуктах. Открытый доступ к исходному коду на GitHub нужен только для работы приложения и не означает предоставления какой-либо лицензии.</p>
+<p>По вопросам сотрудничества и использования: ${esc(AUTHOR_CONTACT)}.</p>
+<h2>Сторонние компоненты</h2>
+<p>В приложении используются: библиотека графиков Chart.js (лицензия MIT), библиотека Telegram Web Apps, открытые курсы валют exchange-api. Права на эти компоненты принадлежат их авторам.</p>
+`;
+V.privacy = { need() { return []; }, draw() {
+  return `<button class="back" data-act="policy-back">‹ ${S.onb ? 'Настройки' : 'Назад'}</button><div class="title">Политика конфиденциальности</div>
+    <div class="sub" style="margin:-6px 4px 12px">Приложение «Точка Б» · редакция от ${POLICY_DATE}</div><div class="doc">${policyHtml()}</div>`; } };
+V.about = { need() { return []; }, draw() {
+  return `<button class="back" data-act="tab" data-tab="settings">‹ Настройки</button><div class="title">О приложении</div>
+    <div class="doc">${aboutHtml()}<p class="sub" style="margin-top:14px">Версия ${APP_VERSION}</p></div>`; } };
+Object.assign(ACT, {
+  'show-policy': () => { if (UI.sheet === 'onb') closeSheet(true); UI.tab = 'privacy'; window.scrollTo(0, 0); render(); },
+  'policy-back': () => { UI.tab = S.onb ? 'settings' : 'home'; window.scrollTo(0, 0); render(); if (!S.onb) openOnboarding(); },
+  'reset': async () => {
+    if (!(await ask('Удалить все счета, операции, планы и резервную копию? Если вы в семье, вы выйдете из неё. Это нельзя отменить.'))) return;
+    if (inFam() && famAvail()) { try { await api('/family/leave'); } catch (e) {} }
+    if (inFam()) famDropLocal();
+    try { localStorage.removeItem(BACKUP); } catch (e) {}
+    S = defaults(); persist(); UI.tab = 'home'; render(); openOnboarding();
+  }
+});
 /* ================= Старт ================= */
 themeColors(); recompute(); render();
 cloudLoad();
+if (!CS) setTimeout(famSync, 300);
+setInterval(() => { if (document.visibilityState === 'visible') famSync(); }, 30000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') famSync(); });
 if (CS && !S.onb) setTimeout(() => { if (!S.onb) cloudChecked(); }, 6000);
 loadLatest().then(ok => { if (ok || !RK.length) render(); });
 
