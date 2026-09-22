@@ -200,11 +200,12 @@ textarea{min-height:140px;font-family:ui-monospace,Menlo,Consolas,monospace;font
  * © 2026 Шандриков Руслан Владимирович (Telegram @rushandrikov). Все права защищены.
  * Копирование, изменение и распространение кода без письменного разрешения автора запрещены.
  */
-const APP_VERSION = '1.7.3 · 22.09.2026';
+const APP_VERSION = '1.7.4 · 22.09.2026';
 // Тестовый режим: включается флагом в тестовой сборке ИЛИ автоматически, если адрес страницы
 // содержит «test» (например .../finance-test/). Вторая проверка страхует от случая, когда
 // в тестовый репозиторий по ошибке загрузили рабочий файл: данные всё равно останутся раздельными.
-const TEST_MODE = (/(^|[\/\-_])test(ing)?([\/\-_]|$)/i.test(location.pathname) || false);
+const PAGE_URL = location.host + location.pathname;
+const TEST_MODE = PAGE_URL.toLowerCase().indexOf('test') >= 0;
 // ▼▼▼ Автор и контакт – показываются в разделе «О приложении» и в политике конфиденциальности ▼▼▼
 const AUTHOR_NAME = 'Шандриков Руслан Владимирович';
 const AUTHOR_CONTACT = 'Telegram @rushandrikov';
@@ -824,7 +825,7 @@ V.settings = {
       <div class="foot">${CS ? 'Данные хранятся на устройстве и синхронизируются через облако Telegram.' : 'Данные хранятся на этом устройстве. Сделайте экспорт, чтобы не потерять их.'} Операций: ${S.tx.length}.</div>
       <div class="h1">О приложении</div>
       <div class="card"><button class="link" data-act="show-policy">Политика конфиденциальности</button><button class="link" data-act="tab" data-tab="about">О приложении и авторские права</button></div>
-      <div class="foot">«Точка Б» · версия ${APP_VERSION}${TEST_MODE ? ' · ТЕСТОВАЯ СРЕДА' : ''}<br>© 2026 ${esc(AUTHOR_NAME)}. Все права защищены.</div>`;
+      <div class="foot">«Точка Б» · версия ${APP_VERSION}${TEST_MODE ? ' · ТЕСТОВАЯ СРЕДА' : ''}<br>Адрес страницы: ${esc(PAGE_URL)}<br>© 2026 ${esc(AUTHOR_NAME)}. Все права защищены.</div>`;
   }
 };
 
