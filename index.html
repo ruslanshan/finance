@@ -200,7 +200,7 @@ textarea{min-height:140px;font-family:ui-monospace,Menlo,Consolas,monospace;font
  * © 2026 Шандриков Руслан Владимирович (Telegram @rushandrikov). Все права защищены.
  * Копирование, изменение и распространение кода без письменного разрешения автора запрещены.
  */
-const APP_VERSION = '1.8.1 · 22.09.2026';
+const APP_VERSION = '1.11 · 23.09.2026';
 // Тестовый режим: включается флагом в тестовой сборке ИЛИ автоматически, если адрес страницы
 // содержит «test» (например .../finance-test/). Вторая проверка страхует от случая, когда
 // в тестовый репозиторий по ошибке загрузили рабочий файл: данные всё равно останутся раздельными.
@@ -440,7 +440,7 @@ function cloudLoad() {
     cloudReady = true; try { localStorage.setItem(LINK, '1'); } catch (x) {}
     if (cloudPending) { cloudPending = false; scheduleCloud(); }
     cloudChecked();
-    setTimeout(famSync, 300);
+    setTimeout(famSync, 300); setTimeout(pingStat, 1500);
   };
   const fail = () => { if (++cloudTries < 4) setTimeout(cloudLoad, 4000); cloudChecked(); };
   readMeta((meta, err) => {
@@ -467,7 +467,8 @@ function cloudLoad() {
 let cloudCheckedOnce = false;
 function cloudChecked() {
   if (cloudCheckedOnce) return; cloudCheckedOnce = true;
-  if (!S.onb && UI.sheet !== 'onb') openOnboarding();
+  if (!S.onb && UI.sheet !== 'onb') { openOnboarding(); return; }
+  if (!UI.sheet) setTimeout(() => { if (UI.sheet) return; if (!tourDone()) openTour(0); else showWhatsNew(false); }, 500);
 }
 
 /* ================= Балансы ================= */
@@ -653,7 +654,7 @@ V.home = {
     const row = a => {
       const v = sgn(a) * (val[a.id] || 0);
       return `<div class="row tap" data-act="acc-open" data-id="${a.id}"><div class="ico">${esc(a.icon || '💼')}</div>
-        <div class="grow"><div class="t">${esc(a.name)}${famBadge(a)}</div>${a.cur !== B() ? `<div class="sub num">≈ ${fmt(conv(v, a.cur, B(), t), B())}</div>` : ''}</div>
+        <div class="grow"><div class="t">${esc(a.name)}${goalBadge(a)}${famBadge(a)}</div>${a.cur !== B() ? `<div class="sub num">≈ ${fmt(conv(v, a.cur, B(), t), B())}</div>` : ''}</div>
         <div class="r num">${fmt(v, a.cur)}</div></div>`;
     };
     const as = S.accounts.filter(a => a.type !== 'liab'), li = S.accounts.filter(a => a.type === 'liab');
@@ -744,6 +745,14 @@ V.stats = {
           scales: { x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 6 } }, y: { ticks: { callback: v => fmtCompact(v), maxTicksLimit: 5 } } } } }]);
       html += `<div class="h1">Денежный поток: доходы − расходы</div><div class="card pad"><div class="chartbox"><canvas id="flowChart"></canvas></div></div>`;
     }
+    const ps = pstats(r.from, r.to);
+    if (S.accounts.some(a => a.goal) && (Math.abs(ps.save) > 1e-9 || Math.abs(ps.cushion) > 1e-9 || Math.abs(ps.invest) > 1e-9)) {
+      html += `<div class="h1">Накопления за период</div><div class="card">
+        <div class="row"><div class="grow">🛡 В финансовую подушку</div><div class="r num ${ps.cushion >= 0 ? 'inc' : 'exp'}">${fmt(ps.cushion, B(), true)}</div></div>
+        <div class="row"><div class="grow">📈 В инвестиции</div><div class="r num ${ps.invest >= 0 ? 'inc' : 'exp'}">${fmt(ps.invest, B(), true)}</div></div>
+        <div class="row"><div class="grow b">Отложено всего${f.inc > 0 ? ` · ${pctf(ps.save / f.inc)} дохода` : ''}</div><div class="r num b ${ps.save >= 0 ? 'inc' : 'exp'}">${fmt(ps.save, B(), true)}</div></div></div>
+        <div class="foot">Перевод между своими счетами не меняет капитал и не входит в денежный поток – он лишь показывает, сколько дохода вы отложили.</div>`;
+    }
     html += breakdown('expDonut', 'Расходы по статьям', f.byExp, f.exp, 'exp') + breakdown('incDonut', 'Доходы по источникам', f.byInc, f.inc, 'inc');
     if (Math.abs(f.rev) > 1e-9 || Math.abs(f.bal) > 1e-9) {
       html += `<div class="h1">Изменение капитала без движения денег</div><div class="card">
@@ -800,7 +809,7 @@ V.settings = {
   need() { return []; },
   draw() {
     const catChips = kind => S.cats.filter(c => c.kind === kind && !c.del).map(c => `<button class="chip" data-act="cat-open" data-id="${c.id}">${esc(c.icon || '')} ${esc(c.name)}</button>`).join('') + `<button class="chip add" data-act="cat-open" data-kind="${kind}">＋ Добавить</button>`;
-    const accRows = type => S.accounts.filter(a => (a.type === 'liab') === (type === 'liab')).map(a => `<div class="row tap" data-act="acc-open" data-id="${a.id}"><div class="ico">${esc(a.icon || '💼')}</div><div class="grow"><div class="t">${esc(a.name)}${famBadge(a)}</div>${a.type !== 'liab' ? `<div class="sub">${a.liquid ? 'ликвидный' : 'не для подушки'}</div>` : ''}</div><div class="sub">${a.cur}</div></div>`).join('');
+    const accRows = type => S.accounts.filter(a => (a.type === 'liab') === (type === 'liab')).map(a => `<div class="row tap" data-act="acc-open" data-id="${a.id}"><div class="ico">${esc(a.icon || '💼')}</div><div class="grow"><div class="t">${esc(a.name)}${goalBadge(a)}${famBadge(a)}</div>${a.type !== 'liab' ? `<div class="sub">${a.liquid ? 'ликвидный' : 'не для подушки'}</div>` : ''}</div><div class="sub">${a.cur}</div></div>`).join('');
     const used = [...new Set(S.accounts.map(a => a.cur).filter(c => c !== B()))];
     const r = rateOf(today());
     const rateRows = used.map(c => `<div class="row"><div class="grow">1 ${c}</div><div class="r num">${r && r[c] && r[B()] ? fmt(r[B()] / r[c], B()) : '–'}</div></div>`).join('');
@@ -821,10 +830,11 @@ V.settings = {
       <div class="card">${rateRows || '<div class="empty">Все счета в валюте отчётов – пересчёт не нужен</div>'}<button class="link" data-act="rates-refresh">${RS.loading ? 'Обновляю…' : 'Обновить курсы'}</button></div>
       <div class="foot">${RS.latest ? 'Последние курсы: ' + fmtDate(RS.latest) + '. ' : ''}Ежедневные курсы загружаются автоматически для каждой даты с операциями (история доступна с марта 2024).</div>
       <div class="h1">Данные</div>
-      <div class="card"><button class="link" data-act="export">Сохранить копию данных</button><button class="link" data-act="import">Восстановить из копии</button>${backupInfo() ? `<button class="link" data-act="restore-backup">Восстановить копию с устройства от ${backupInfo()}</button>` : ''}<button class="link" data-act="reset" style="color:var(--exp)">Удалить все данные</button></div>
+      <div class="card"><button class="link" data-act="export">Сохранить копию данных</button><button class="link" data-act="import">Восстановить из копии</button><label class="sw" style="padding:12px 0"><span>Отправлять статистику использования<small>Только дата открытия и общие признаки: версия, число операций, используете ли семейный бюджет. Содержимое финансов не передаётся</small></span><input type="checkbox" data-stat="1" ${S.noStat ? '' : 'checked'}></label>
+      ${backupInfo() ? `<button class="link" data-act="restore-backup">Восстановить копию с устройства от ${backupInfo()}</button>` : ''}<button class="link" data-act="reset" style="color:var(--exp)">Удалить все данные</button></div>
       <div class="foot">${CS ? 'Данные хранятся на устройстве и синхронизируются через облако Telegram.' : 'Данные хранятся на этом устройстве. Сделайте экспорт, чтобы не потерять их.'} Операций: ${S.tx.length}.</div>
       <div class="h1">О приложении</div>
-      <div class="card"><button class="link" data-act="show-policy">Политика конфиденциальности</button><button class="link" data-act="tab" data-tab="about">О приложении и авторские права</button></div>
+      <div class="card"><button class="link" data-act="show-policy">Политика конфиденциальности</button><button class="link" data-act="tab" data-tab="guide">Как пользоваться</button><button class="link" data-act="news-open">Что нового</button><button class="link" data-act="tab" data-tab="about">О приложении и авторские права</button></div>
       <div class="foot">«Точка Б» · версия ${APP_VERSION}${TEST_MODE ? ' · ТЕСТОВАЯ СРЕДА' : ''}<br>Адрес страницы: ${esc(PAGE_URL)}<br>© 2026 ${esc(AUTHOR_NAME)}. Все права защищены.</div>`;
   }
 };
@@ -838,7 +848,7 @@ function draw() {
   mountCharts();
   const tabKey = UI.tab === 'diag' || UI.tab === 'diagres' ? 'health' : UI.tab;
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tabKey));
-  $('#fab').classList.toggle('hide', ['settings', 'health', 'diag', 'diagres', 'privacy', 'about'].includes(UI.tab));
+  $('#fab').classList.toggle('hide', ['settings', 'health', 'diag', 'diagres', 'privacy', 'about', 'guide'].includes(UI.tab));
 }
 async function render() {
   const seq = ++renderSeq; draw();
@@ -971,6 +981,10 @@ function accHtml() {
     ${field('Название', `<div class="two"><input data-af="icon" value="${esc(AF.icon)}" maxlength="4" aria-label="Иконка"><input data-af="name" value="${esc(AF.name)}" placeholder="${liab ? 'Например, Ипотека' : 'Например, Карта или Биткоин'}" maxlength="40"></div>`)}
     ${field('Валюта', `<select data-af="cur" ${locked ? 'disabled' : ''}>${CODES.map(c => `<option value="${c}" ${c === AF.cur ? 'selected' : ''}>${c} – ${CUR[c][0]}</option>`).join('')}</select>`)}
     ${locked ? '<div class="sub" style="margin:-6px 4px 12px">Тип и валюту нельзя менять, пока по счёту есть операции.</div>' : ''}
+    ${liab ? '' : field('Назначение счёта', `<select data-af="goal">
+      <option value="" ${!AF.goal ? 'selected' : ''}>Обычный счёт</option>
+      <option value="cushion" ${AF.goal === 'cushion' ? 'selected' : ''}>🛡 Финансовая подушка</option>
+      <option value="invest" ${AF.goal === 'invest' ? 'selected' : ''}>📈 Инвестиции</option></select>`) + '<div class="sub" style="margin:-6px 4px 12px">Переводы на такой счёт считаются отложенными: приложение покажет темп накоплений и прогресс к цели.</div>'}
     ${liab ? '' : toggle('af', 'liquid', AF.liquid, 'Ликвидный', 'Деньги можно получить за пару дней – счёт входит в финансовую подушку')}
     ${field(liab ? 'Сумма долга на старте' : 'Начальный остаток', `<div class="amtwrap"><input class="num" data-af="init" inputmode="decimal" placeholder="0" value="${esc(AF.init)}"><span>${AF.cur}</span></div>`)}
     ${famAccBlock()}
@@ -980,7 +994,7 @@ function accHtml() {
 function saveAcc() {
   const name = (AF.name || '').trim(); if (!name) return toast('Введите название');
   const init = AF.init === '' ? 0 : num(AF.init); if (!isFinite(init)) return toast('Проверьте начальную сумму');
-  const data = { name, icon: (AF.icon || '').trim() || '💼', type: AF.type, cur: AF.cur, init, liquid: AF.type !== 'liab' && !!AF.liquid };
+  const data = { name, icon: (AF.icon || '').trim() || '💼', type: AF.type, cur: AF.cur, init, liquid: AF.type !== 'liab' && !!AF.liquid, goal: AF.type === 'liab' ? '' : (AF.goal || '') };
   if (famAccLocked()) return toast('Изменить общий счёт может только владелец');
   let acc; if (AF.id) { acc = accById(AF.id); Object.assign(acc, data); } else { acc = Object.assign({ id: uid() }, data); S.accounts.push(acc); }
   famAfterAcc(acc, !!AF.share);
@@ -1188,12 +1202,12 @@ const ACT = {
   'exp-download': () => downloadBackup(), 'exp-send': el => sendBackupToChat(el),
   'imp-file': () => { const el = $('#impfile'); if (el) el.click(); },
   'copy-export': async () => { const ta = $('#expdata'); try { await navigator.clipboard.writeText(ta.value); } catch (e) { ta.select(); document.execCommand('copy'); } toast('Скопировано'); },
-  'onb-done': () => { const c = $('#onbcur').value; S.base = c; S.accounts.forEach(a => { if (!hasTx(a.id)) a.cur = c; }); S.onb = true; persist(); closeSheet(true); render(); }
+  'onb-done': () => { markVersionSeen(); const c = $('#onbcur').value; S.base = c; S.accounts.forEach(a => { if (!hasTx(a.id)) a.cur = c; }); S.onb = true; persist(); closeSheet(true); render(); if (!tourDone()) setTimeout(() => openTour(0), 350); }
 };
 document.addEventListener('click', e => { const el = e.target.closest('[data-act]'); if (!el) return; const f = ACT[el.dataset.act]; if (f) { e.preventDefault(); f(el, e); } });
 document.addEventListener('input', e => {
   const el = e.target, d = el.dataset;
-  if (el.type === 'checkbox') { if (d.af && AF) AF[d.af] = el.checked; if (d.cf && CF) CF[d.cf] = el.checked; return; }
+  if (el.type === 'checkbox') { if (d.af && AF) AF[d.af] = el.checked; if (d.cf && CF) CF[d.cf] = el.checked; if (d.stat) { S.noStat = !el.checked; persist(); } return; }
   if (d.f && F) { F[d.f] = el.value; if (d.f === 'amt2') F.m2 = el.value !== ''; if (F.t === 'tr' && (d.f === 'amt' || d.f === 'amt2')) trAuto(d.f === 'amt'); if (d.f === 'nb') nbHint(); }
   else if (d.af && AF) { AF[d.af] = el.value; }
   else if (d.cf && CF) CF[d.cf] = el.value;
@@ -1204,6 +1218,7 @@ document.addEventListener('change', e => {
   if (el.id === 'impfile') { readBackupFile(el.files && el.files[0]); return; }
   if (d.fs && F) { F[d.fs] = el.value || today(); if (d.fs === 'a' || d.fs === 'a2') { F.m2 = false; F.amt2 = ''; } setSheet(opHtml()); afterOpDraw(); if (F.t === 'tr') trAuto(true); }
   else if (d.af === 'cur' && AF) { AF.cur = el.value; setSheet(accHtml()); }
+  else if (d.af && AF) AF[d.af] = el.value;
   else if (d.change === 'base') { S.base = el.value; persist(); toast('Валюта отчётов: ' + el.value); render(); }
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); if (e.key === 'Enter' && e.target.matches('#sheet input')) e.target.blur(); });
@@ -1214,17 +1229,21 @@ if (tg && tg.onEvent) tg.onEvent('themeChanged', () => { themeColors(); draw(); 
 const pctf = v => (v * 100).toFixed(Math.abs(v) < .1 ? 1 : 0).replace('.', ',') + '%';
 const dec1 = v => v.toFixed(1).replace('.', ',');
 function pstats(from, to) {
-  const o = { inc: 0, exp: 0, must: 0, passive: 0, debt: 0, rev: 0, bal: 0, debtCats: {} };
+  const o = { inc: 0, exp: 0, must: 0, passive: 0, debt: 0, rev: 0, bal: 0, debtCats: {}, save: 0, cushion: 0, invest: 0 };
   for (const t of SORTED) {
     if (t.d < from) continue; if (t.d > to) break;
     const a = accById(t.a); if (!a) continue;
     if (t.t === 'inc' || t.t === 'exp') {
       const v = conv(t.amt, a.cur, S.base, t.d), c = catById(t.c);
-      if (t.t === 'inc') { o.inc += v; if (c && c.passive) o.passive += v; }
+      if (t.t === 'inc') { o.inc += v; if (c && c.passive) o.passive += v; if (a.goal) { o[a.goal] += v; o.save += v; } }
       else { o.exp += v; if (c && c.must) o.must += v; if (c && c.debt) { o.debt += v; o.debtCats[c.id] = (o.debtCats[c.id] || 0) + v; } }
     } else if (t.t === 'tr') {
       const b = accById(t.a2);
       if (b && b.type === 'liab' && a.type !== 'liab') o.debt += conv(t.amt2, b.cur, S.base, t.d);
+      // пополнение накопительного счёта считается отложенным, снятие с него – изъятием
+      const sg = a.goal, dg = b && b.goal;
+      if (dg && dg !== sg) { const v2 = conv(t.amt2, b.cur, S.base, t.d); o[dg] += v2; if (!sg) o.save += v2; }
+      if (sg && sg !== dg) { const v1 = conv(t.amt, a.cur, S.base, t.d); o[sg] -= v1; if (!dg) o.save -= v1; }
     } else if (t.t === 'rev' || t.t === 'bal') o[t.t] += conv(t._delta || 0, a.cur, S.base, t.d);
   }
   return o;
@@ -1251,6 +1270,11 @@ function health() {
     if (a.type === 'liab') li -= x; else { as += x; if (a.liquid && x > 0) liquid += x; if (x > 0) assetVals.push([a, x]); }
   });
   const net = as - li, hasMust = S.cats.some(c => c.must && !c.del), hasLiab = S.accounts.some(a => a.type === 'liab');
+  // Счета с назначением: «подушка» и «инвестиции»
+  const cushAcc = S.accounts.filter(a => a.goal === 'cushion' && a.type !== 'liab');
+  const cushSum = cushAcc.reduce((x, a) => x + conv(val[a.id] || 0, a.cur, S.base, t), 0);
+  const invAcc = S.accounts.filter(a => a.goal === 'invest' && a.type !== 'liab');
+  const invSum = invAcc.reduce((x, a) => x + conv(val[a.id] || 0, a.cur, S.base, t), 0);
   const m = {};
   let v = p.inc > 0 ? (p.inc - p.exp) / p.inc : null;
   m.savings = { name: 'Норма сбережений', v, s: st(v, .2, .1), val: v == null ? '–' : pctf(v), target: 'Какая доля дохода остаётся. Ориентир – от 20%',
@@ -1259,9 +1283,10 @@ function health() {
   m.must = { name: 'Обязательные расходы', v, s: st(v, .5, .7, false), val: v == null ? '–' : pctf(v), target: 'Доля дохода на то, что нельзя урезать. Ориентир – до 50%',
     hint: { good: 'Есть запас для манёвра, если доход снизится.', ok: 'Запас небольшой. Пересмотрите крупные фиксированные платежи: жильё, связь, подписки, кредиты.', bad: 'Почти весь доход уходит на обязательное – любая просадка дохода станет проблемой.', na: hasMust ? 'За период нет доходов.' : 'Отметьте обязательные статьи в настройках.' } };
   const base = avgMust > 0 ? avgMust : avgExp;
-  v = base > 0 ? liquid / base : null;
+  const safety = cushAcc.length ? cushSum : liquid; // если счёт подушки назначен, считаем только по нему
+  v = base > 0 ? safety / base : null;
   m.cushion = { name: 'Финансовая подушка', v, s: st(v, 6, 3), val: v == null ? '–' : dec1(v) + ' мес.', target: `Сколько месяцев проживёте без дохода${avgMust > 0 ? ' на обязательных расходах' : ''}. Ориентир – 3–6 мес.`,
-    hint: { good: 'Надёжная защита от потери дохода.', ok: 'База есть. Доведите до 6 месяцев, особенно если доход в семье один.', bad: `До 3 месяцев не хватает ${fmt(Math.max(0, base * 3 - liquid), S.base)}. Сделайте подушку первой целью.`, na: 'Нужны данные о расходах и хотя бы один ликвидный счёт.' } };
+    hint: { good: 'Надёжная защита от потери дохода.', ok: 'База есть. Доведите до 6 месяцев, особенно если доход в семье один.', bad: `До 3 месяцев не хватает ${fmt(Math.max(0, base * 3 - safety), S.base)}. Сделайте подушку первой целью.`, na: cushAcc.length ? 'Нужны данные о расходах.' : 'Нужны данные о расходах и хотя бы один ликвидный счёт.' } };
   v = !hasLiab && p.debt === 0 ? 0 : avgInc > 0 ? avgDebt / avgInc : null;
   m.debtload = { name: 'Долговая нагрузка', v, s: st(v, .2, .4, false), val: v == null ? '–' : v === 0 && !hasLiab ? 'нет долгов' : pctf(v), target: 'Платежи по долгам к доходу. Ориентир – до 20%',
     hint: { good: hasLiab ? 'Кредиты не мешают копить.' : 'Долгов нет – все доходы работают на вас.', ok: 'Ощутимая нагрузка. Не берите новых кредитов и гасите досрочно самый дорогой.', bad: 'Долги съедают значительную часть дохода. Приоритет – снизить нагрузку: рефинансирование, досрочное погашение.', na: 'Погашение записывайте переводом на счёт долга, проценты – расходом с отметкой «Платёж по долгу».' } };
@@ -1288,10 +1313,20 @@ function health() {
   const flow = fl.inc - fl.exp, other = change - flow - fl.rev - fl.bal;
   m.trend = { name: 'Изменение капитала', v: change, s: Math.abs(change) < 1e-9 ? 'ok' : change > 0 ? 'good' : 'bad', val: fmt(change, S.base, true), target: `С ${fmtDate(w.from)} по сегодня`,
     hint: { good: flow > 0 && flow >= change / 2 ? 'Капитал растёт за счёт сбережений – это устойчивый рост.' : 'Капитал растёт, но в основном за счёт переоценки и курсов – такой рост может развернуться.', ok: 'Капитал не изменился.', bad: flow < 0 ? 'Капитал тает: расходы больше доходов.' : 'Капитал снизился из-за переоценки активов или курсов валют.', na: '' } };
-  const W8 = { savings: 25, cushion: 20, debtload: 15, must: 10, debtassets: 10, trend: 10, years: 5, passive: 5, conc: 5 }, PT = { good: 100, ok: 60, bad: 20 };
+  // Дисциплина накоплений: сколько дохода реально ушло на накопительные счета
+  const avgSave = p.save / M, target6 = base * 6, done = target6 > 0 && safety >= target6;
+  v = p.inc > 0 && (cushAcc.length || invAcc.length) ? p.save / p.inc : null;
+  m.saverate = { name: 'Дисциплина накоплений', v, s: st(v, .2, .1), val: v == null ? '–' : pctf(v), target: `Какую долю дохода вы перевели на накопительные счета${done ? ' (сейчас цель – инвестиции)' : ' (сейчас цель – подушка)'}. Ориентир – 20%`,
+    hint: { good: done ? 'Отличный темп. Подушка собрана, деньги идут в инвестиции.' : 'Отличный темп пополнения подушки.',
+      ok: 'Откладывать получается, но меньше 20%. Переводите долю сразу в день дохода, а не в конце месяца.',
+      bad: 'За период почти ничего не отложено. Правило простое: сначала переводим долю на накопительный счёт, живём на остаток.',
+      na: cushAcc.length || invAcc.length ? 'За период нет доходов.' : 'Отметьте назначение счёта («Финансовая подушка» или «Инвестиции») в его настройках – и здесь появится ваш темп накоплений.' } };
+  const goal = { has: !!(cushAcc.length || invAcc.length), done, cush: cushSum, inv: invSum, target: target6, need: Math.max(0, target6 - safety),
+    rate: done ? p.invest / M : p.cushion / M, months: base > 0 ? safety / base : null, avgSave };
+  const W8 = { savings: 25, cushion: 20, saverate: 15, debtload: 15, must: 10, debtassets: 10, trend: 10, years: 5, passive: 5, conc: 5 }, PT = { good: 100, ok: 60, bad: 20 };
   let sw = 0, ss = 0; for (const k in m) if (m[k].s !== 'na' && W8[k]) { sw += W8[k]; ss += W8[k] * PT[m[k].s]; }
   const score = sw ? Math.round(ss / sw) : null;
-  return { w, m, score, src: { change, flow, rev: fl.rev, bal: fl.bal, other }, liquid, avgMust, avgExp };
+  return { w, m, score, src: { change, flow, rev: fl.rev, bal: fl.bal, other }, liquid, avgMust, avgExp, goal, p };
 }
 const scoreLabel = s => s >= 80 ? 'Отличное состояние' : s >= 60 ? 'Хорошее состояние' : s >= 40 ? 'Есть над чем работать' : 'Требует внимания';
 const scoreColor = s => s >= 80 ? COL.inc : s >= 60 ? COL.accent : s >= 40 ? 'var(--warn)' : COL.exp;
@@ -1321,12 +1356,27 @@ V.health = {
     html += `<div class="card pad scorecard"><div class="ring" style="--p:${sc || 0};--c:${scoreColor(sc || 0)}"><div class="num">${sc == null ? '–' : sc}</div></div>
       <div><div class="b" style="font-size:17px">${sc == null ? 'Мало данных' : scoreLabel(sc)}</div>
       <div class="sub">Сводная оценка из 100 по данным учёта с ${fmtDate(h.w.from)}${h.w.partial ? '. Учёт ведётся недавно – оценка станет точнее через 1–2 месяца' : ''}</div></div></div>`;
+    const g = h.goal;
+    if (g.has) {
+      const pct = g.target > 0 ? Math.min(100, (g.done ? 100 : (g.target - g.need) / g.target * 100)) : 0;
+      const eta = !g.done && g.rate > 0 ? Math.ceil(g.need / g.rate) : null;
+      html += `<div class="h1">${g.done ? 'Цель: инвестировать' : 'Цель: финансовая подушка'}</div><div class="card pad">
+        ${g.done
+          ? `<div class="b" style="font-size:17px">Подушка собрана: ${dec1(g.months)} мес. расходов</div>
+             <div class="sub" style="margin-top:4px">Следующий шаг – направлять те же 20–30% дохода в инвестиции. Вложено на инвестиционных счетах: <b>${fmt(g.inv, B())}</b>, за период добавлено <b>${fmt(h.p.invest, B())}</b>.</div>`
+          : `<div class="mrow"><div class="grow"><div class="b" style="font-size:17px">${fmt(g.cush, B())} из ${fmt(g.target, B())}</div>
+               <div class="sub">6 месяцев ваших ${h.avgMust > 0 ? 'обязательных ' : ''}расходов</div></div>
+               <div class="mval num">${Math.round(pct)}%</div></div>
+             <div class="bar" style="height:8px;margin-top:10px"><i style="width:${pct.toFixed(1)}%;background:${COL.accent}"></i></div>
+             <div class="sub" style="margin-top:8px">Осталось отложить <b>${fmt(g.need, B())}</b>.${eta ? ` При текущем темпе (${fmt(g.rate, B())} в месяц) – около ${eta} мес.` : ' Пополняйте счёт подушки, и здесь появится срок достижения цели.'}</div>`}
+      </div>`;
+    }
     const order = ['savings', 'cushion', 'debtload', 'must', 'trend', 'debtassets', 'conc', 'years', 'passive'];
     const row = k => { const x = h.m[k]; if (!x) return ''; const cls = x.s === 'good' ? 'inc' : x.s === 'bad' ? 'exp' : '';
       return `<div class="metric"><div class="mrow"><div class="grow"><div class="b">${x.name}</div><div class="sub">${esc(x.target)}</div></div>
         <div><div class="mval num ${cls}">${x.val}</div><div class="r" style="margin-top:3px"><span class="pill ${x.s}">${PILL[x.s]}</span></div></div></div>
         ${x.hint[x.s] ? `<div class="mhint">${x.hint[x.s]}</div>` : ''}</div>`; };
-    html += `<div class="h1">Поток и бюджет</div><div class="card">${row('savings')}${row('must')}${row('passive')}</div>`;
+    html += `<div class="h1">Поток и бюджет</div><div class="card">${row('savings')}${row('saverate')}${row('must')}${row('passive')}</div>`;
     html += `<div class="h1">Защита и долги</div><div class="card">${row('cushion')}${row('debtload')}${row('debtassets')}</div>`;
     html += `<div class="h1">Капитал</div><div class="card">${row('trend')}${row('years')}${row('conc')}</div>`;
     const s = h.src;
@@ -1511,6 +1561,7 @@ const famReady = () => famAvail() && inFam();
 const memberName = uid => { if (uid && uid === myId()) return 'вы'; const m = S.fam && (S.fam.members || []).find(x => x.uid === uid); return m ? m.name : 'участник семьи'; };
 const sharedSet = () => new Set(S.accounts.filter(a => a.sh).map(a => a.id));
 const touchesShared = t => { const sh = sharedSet(); return sh.has(t.a) || !!(t.a2 && sh.has(t.a2)); };
+const goalBadge = a => a.goal === 'cushion' ? ' <span class="badge">🛡 подушка</span>' : a.goal === 'invest' ? ' <span class="badge">📈 инвестиции</span>' : '';
 const famBadge = a => a.sh ? ` <span class="badge">👥 общий${a.owner && a.owner !== myId() ? ' · ' + esc(memberName(a.owner)) : ''}</span>` : '';
 const FAM_ERR = { auth: 'Telegram не подтвердил вход – перезапустите приложение', already_member: 'Вы уже состоите в семье', bad_code: 'Код не найден или истёк', not_member: 'Вы больше не участник семьи', server_not_configured: 'Сервер не настроен: проверьте BOT_TOKEN и базу D1', 'Failed to fetch': 'нет связи с сервером' };
 const famErrText = e => FAM_ERR[e] || e;
@@ -1722,6 +1773,20 @@ Object.assign(ACT, {
   }
 });
 
+/* ---- Обезличенная отметка об открытии приложения ---- */
+// Отправляется не чаще раза в сутки. Содержимое финансов не передаётся: только версия,
+// валюта отчётов, число операций и признаки того, какими разделами пользуются.
+const STAT_KEY = 'finapp_stat_day' + SFX;
+async function pingStat() {
+  if (!famAvail() || S.noStat) return;
+  const d = today();
+  try { if (localStorage.getItem(STAT_KEY) === d) return; } catch (e) {}
+  try {
+    await api('/stat', { ver: APP_VERSION, base: S.base, txn: S.tx.length, fam: inFam(), goals: S.accounts.some(a => a.goal), diag: S.diag ? S.diag.stage : 0 });
+    localStorage.setItem(STAT_KEY, d);
+  } catch (e) {}
+}
+
 /* ================= Политика конфиденциальности и авторство ================= */
 const policyHtml = () => `<h2>1. Кто мы</h2>
 <p>«Точка Б» – приложение для учёта личных финансов, которое работает внутри Telegram (Telegram Mini App) через Telegram-бота. Автор и правообладатель приложения – ${esc(AUTHOR_NAME)} (далее – «автор»). Связаться с автором: ${esc(AUTHOR_CONTACT)}.</p>
@@ -1731,6 +1796,7 @@ const policyHtml = () => `<h2>1. Кто мы</h2>
 <li><b>Данные, которые вы вводите сами:</b> счета и их остатки, доходы, расходы, переводы, переоценки, статьи, планы, комментарии к операциям, ответы на вопросы финансовой диагностики, настройки.</li>
 <li><b>Данные Telegram:</b> числовой идентификатор вашего аккаунта, имя и фамилия из профиля. Они используются только для семейного бюджета – чтобы подтвердить, что запрос отправили именно вы, и показать ваше имя участникам семьи.</li>
 <li><b>Технические данные:</b> даты, на которые приложение запрашивает курсы валют.</li>
+<li><b>Статистика использования:</b> ваш идентификатор Telegram, даты открытия приложения, версия, валюта отчётов, количество операций и признаки того, пользуетесь ли вы семейным бюджетом, целями и диагностикой. Это нужно автору, чтобы понимать, насколько приложение востребовано. Содержимое операций, названия счетов и суммы не передаются. Отключить сбор можно в Настройках, раздел «Данные».</li>
 </ul>
 <p>Приложение <b>не собирает</b> номера банковских карт и счетов, пароли, паспортные данные, геолокацию, контакты и файлы с устройства. В приложении нет рекламы, счётчиков аналитики и трекеров. Не вводите в комментарии к операциям конфиденциальные сведения: номера карт, пароли, коды.</p>
 <h2>3. Где хранятся данные</h2>
@@ -1805,11 +1871,168 @@ Object.assign(ACT, {
     S = defaults(); persist(); UI.tab = 'home'; render(); openOnboarding();
   }
 });
+
+/* ================= Что нового ================= */
+// Список обновлений, новое – сверху. Показывается один раз после установки новой версии.
+const CHANGELOG = [
+  { v: '1.11', d: '23.09.2026', items: ['Приложение раз в сутки сообщает серверу, что было открыто: это нужно, чтобы автор видел, сколько людей им пользуются.', 'Передаются только дата, версия и общие признаки – содержимое ваших финансов не отправляется. Отключить: Настройки → Данные.'] },
+  { v: '1.10', d: '22.09.2026', items: ['При первом входе появляется пошаговое обучение: девять коротких экранов по всем разделам.', 'Появилась полная инструкция: Настройки → О приложении → «Как пользоваться».'] },
+  { v: '1.9.1', d: '22.09.2026', items: ['Появилось это окно: после каждого обновления коротко рассказываем, что изменилось.', 'Список изменений всегда доступен: Настройки → О приложении → Что нового.'] },
+  { v: '1.9', d: '22.09.2026', items: ['У счёта появилось назначение: «Финансовая подушка» или «Инвестиции».', 'Новая метрика «Дисциплина накоплений»: какую долю дохода вы реально отложили.', 'Карточка цели: прогресс подушки, сколько осталось и срок при вашем темпе. После достижения 6 месяцев цель сама меняется на инвестиции.', 'В статистике – блок «Накопления за период».'] },
+  { v: '1.8', d: '22.09.2026', items: ['Резервная копия теперь файл: бот присылает его в чат одним нажатием.', 'Восстановление – выбором файла на устройстве.'] },
+  { v: '1.7', d: '22.09.2026', items: ['Данные между телефоном и компьютером обновляются сами, каждые 15 секунд.', 'Правки с двух устройств больше не затирают друг друга.'] }
+];
+const VER_KEY = 'finapp_seen_ver' + SFX;
+const markVersionSeen = () => { try { localStorage.setItem(VER_KEY, CHANGELOG[0].v); } catch (e) {} };
+function newsFor(force) {
+  let seen = null; try { seen = localStorage.getItem(VER_KEY); } catch (e) {}
+  if (force) return CHANGELOG.slice(0, 3);
+  if (!seen) return [CHANGELOG[0]];
+  const i = CHANGELOG.findIndex(c => c.v === seen);
+  return i < 0 ? [CHANGELOG[0]] : CHANGELOG.slice(0, i);
+}
+function showWhatsNew(force) {
+  const list = newsFor(force);
+  if (!list.length) return false;
+  openSheet('news', `<div class="stitle">Что нового</div>
+    ${list.map(c => `<div class="card pad" style="background:var(--fill);margin-bottom:10px">
+      <div class="sub">Версия ${c.v} · ${c.d}</div>
+      <ul class="steps" style="margin-left:18px">${c.items.map(x => `<li>${x}</li>`).join('')}</ul></div>`).join('')}
+    <button class="btn" data-act="news-ok">Понятно</button>`);
+  return true;
+}
+Object.assign(ACT, {
+  'news-ok': () => { markVersionSeen(); closeSheet(true); },
+  'news-open': () => showWhatsNew(true)
+});
+
+/* ================= Обучение и инструкция ================= */
+const TOUR_KEY = 'finapp_tour_done' + SFX;
+const tourDone = () => { try { return localStorage.getItem(TOUR_KEY) === '1'; } catch (e) { return false; } };
+const markTour = () => { try { localStorage.setItem(TOUR_KEY, '1'); } catch (e) {} };
+
+const TOUR = [
+  { icon: '🎯', tab: 'home', title: 'Зачем это приложение',
+    text: 'Оно отвечает на четыре вопроса: сколько у вас денег, куда они уходят, сколько остаётся и растёт ли ваш капитал.<br><br>Нужно тратить пару минут в день: записывать траты. Всё остальное приложение посчитает само.' },
+  { icon: '💳', tab: 'home', title: 'Шаг 1. Заведите счета',
+    text: 'Счёт – это место, где лежат деньги: карта, наличные, вклад, криптокошелёк. На экране «Обзор» нажмите <b>«＋ Добавить счёт»</b> и укажите название, валюту и сколько там сейчас денег.<br><br>Кредиты и долги добавляйте ниже, в разделе «Обязательства». Тогда приложение покажет ваш настоящий капитал: активы минус долги.' },
+  { icon: '➕', tab: 'ops', title: 'Шаг 2. Записывайте операции',
+    text: 'Синяя кнопка <b>＋</b> внизу справа. Там пять типов:<br><br>• <b>Расход</b> – потратили.<br>• <b>Доход</b> – получили.<br>• <b>Перевод</b> – переложили между своими счетами.<br>• <b>Переоценка</b> – изменилась цена актива: крипта, авто, квартира.<br>• <b>Остаток</b> – сверка: вписываете, сколько реально на счёте, приложение само поправит разницу.<br><br>В поле суммы можно считать: напишите 350+120.' },
+  { icon: '📊', tab: 'stats', title: 'Шаг 3. Смотрите статистику',
+    text: 'Здесь видно, куда уходят деньги: по статьям, за день, неделю, месяц или год. Стрелки ‹ › листают периоды.<br><br>«Поток» – это доходы минус расходы. Если он со знаком минус, вы тратите больше, чем зарабатываете.' },
+  { icon: '🎯', tab: 'plan', title: 'Шаг 4. Ставьте план',
+    text: 'Нажмите на статью и задайте, сколько хотите потратить или заработать за месяц. Приложение покажет план, факт и разницу, а перерасход подсветит красным.<br><br>Кнопка внизу копирует план с прошлого месяца, чтобы не вводить заново.' },
+  { icon: '💚', tab: 'health', title: 'Шаг 5. Проверяйте здоровье финансов',
+    text: 'Экран «Здоровье» превращает ваши записи в понятные показатели: сколько вы откладываете, на сколько месяцев хватит сбережений, не давят ли долги, растёт ли капитал. У каждого есть ориентир и подсказка, что делать.<br><br>Там же – диагностика из 10 вопросов. Она определит вашу точку А и даст три главных шага.' },
+  { icon: '🛡', tab: 'health', title: 'Шаг 6. Цель: подушка, потом инвестиции',
+    text: 'Откройте счёт, на который откладываете, и в поле <b>«Назначение счёта»</b> выберите «Финансовая подушка» или «Инвестиции».<br><br>После этого приложение покажет, какую долю дохода вы реально откладываете, сколько осталось до цели и за сколько месяцев вы её достигнете.' },
+  { icon: '🛟', tab: 'settings', title: 'Шаг 7. Сохраните копию данных',
+    text: 'Настройки → Данные → <b>«Сохранить копию данных»</b>. Бот пришлёт файл в чат. Делайте это раз в месяц – и вы ничего не потеряете.<br><br>Там же: общий семейный бюджет, статьи расходов, валюта отчётов и курсы.' },
+  { icon: '✅', tab: 'settings', title: 'Готово!', last: true,
+    text: 'Начните с малого: добавьте свои счета и записывайте траты неделю. Уже через месяц вы увидите полную картину.<br><br><b>Полная инструкция всегда под рукой:</b> Настройки → О приложении → <b>«Как пользоваться»</b>. Там подробные ответы на все вопросы.' }
+];
+
+function openTour(i) {
+  UI.tourStep = Math.max(0, Math.min(i, TOUR.length - 1));
+  const s = TOUR[UI.tourStep];
+  if (s.tab) { UI.tab = s.tab; window.scrollTo(0, 0); draw(); }
+  openSheet('tour', `<div style="text-align:center;font-size:40px;line-height:1;margin:6px 0 10px">${s.icon}</div>
+    <div class="stitle" style="text-align:center">${s.title}</div>
+    <div style="font-size:15.5px;line-height:1.5">${s.text}</div>
+    <div style="display:flex;gap:4px;justify-content:center;margin:18px 0 14px">${TOUR.map((x, k) => `<i style="width:${k === UI.tourStep ? 18 : 7}px;height:7px;border-radius:4px;background:${k === UI.tourStep ? COL.accent : 'var(--fill)'};display:block"></i>`).join('')}</div>
+    <button class="btn" data-act="tour-next">${s.last ? 'Начать пользоваться' : 'Далее'}</button>
+    <div style="display:flex;gap:8px">
+      ${UI.tourStep ? '<button class="btn ghost" data-act="tour-prev" style="flex:1">Назад</button>' : ''}
+      ${s.last ? '<button class="btn ghost" data-act="tour-guide" style="flex:1">Открыть инструкцию</button>' : '<button class="btn ghost" data-act="tour-skip" style="flex:1">Пропустить</button>'}
+    </div>`);
+}
+function endTour(go) {
+  markTour(); closeSheet(true);
+  if (go === 'guide') { UI.tab = 'guide'; window.scrollTo(0, 0); render(); }
+  else { UI.tab = 'home'; render(); toast('Инструкция всегда в настройках: «Как пользоваться»'); }
+}
+
+const GUIDE = [
+  { t: 'С чего начать', h: `<ol class="steps"><li>Выберите валюту, в которой хотите видеть итоги. Её можно сменить в настройках.</li>
+      <li>На экране «Обзор» добавьте все свои счета: карты, наличные, вклады, криптокошельки. Для каждого укажите, сколько там денег сейчас.</li>
+      <li>Если есть кредиты или долги, добавьте их в разделе «Обязательства» и укажите сумму долга.</li>
+      <li>Начните записывать траты кнопкой ＋. Первую неделю это главное, остальное подождёт.</li></ol>` },
+  { t: 'Счета и обязательства', h: `<p><b>Счёт</b> – место, где лежат деньги или ценность, которой вы владеете: карта, наличные, вклад, крипта, машина, квартира.</p>
+      <p><b>Обязательство</b> – то, что вы должны: кредит, ипотека, долг другу. Указывается сумма долга, а приложение вычитает её из капитала.</p>
+      <p><b>Капитал</b> = все счета минус все долги. Это главное число на «Обзоре».</p>
+      <p>У счёта есть три настройки:</p>
+      <ul><li><b>Валюта</b> – счёт ведётся в своей валюте, а итоги приложение пересчитывает по курсу на дату каждой операции.</li>
+      <li><b>Ликвидный</b> – деньги можно получить за пару дней. Такие счета входят в финансовую подушку. Квартира или заблокированный вклад – не ликвидные.</li>
+      <li><b>Назначение</b> – «Финансовая подушка» или «Инвестиции». Переводы на такой счёт считаются отложенными.</li></ul>` },
+  { t: 'Пять типов операций', h: `<ul><li><b>Расход</b> – потратили деньги. Выбираете статью: продукты, транспорт, кафе.</li>
+      <li><b>Доход</b> – получили деньги. Выбираете источник: зарплата, подработка.</li>
+      <li><b>Перевод</b> – переложили между своими счетами или погасили кредит. На доходы и расходы не влияет, потому что деньги остались вашими.</li>
+      <li><b>Переоценка</b> – изменилась стоимость актива: крипта подорожала, машина подешевела. Вписываете новую стоимость, разница идёт в капитал, но не в расходы.</li>
+      <li><b>Остаток</b> – сверка с реальностью. Вписываете, сколько на самом деле на счёте, приложение само добавит поправку. Делайте раз в неделю, чтобы мелкие забытые траты не копились.</li></ul>
+      <p>В поле суммы работают вычисления: 350+120*2. Дату можно менять, комментарий необязателен.</p>` },
+  { t: 'Статьи расходов и источников', h: `<p>Статья – это категория трат. Меняются в Настройках, нажмите на любую.</p>
+      <p>У статей есть отметки, они нужны для показателей на экране «Здоровье»:</p>
+      <ul><li><b>Обязательный расход</b> – то, без чего не прожить: жильё, еда, транспорт, лекарства. По ним считается финансовая подушка.</li>
+      <li><b>Платёж по долгу</b> – проценты и платежи по кредитам. По ним считается долговая нагрузка.</li>
+      <li><b>Пассивный доход</b> – деньги, которые приходят без вашей работы: проценты, дивиденды, аренда.</li></ul>
+      <p>Если статья уже использовалась, при удалении она просто скроется, а старые операции сохранятся.</p>` },
+  { t: 'Статистика', h: `<p>Период переключается кнопками «День, Неделя, Месяц, Год», а стрелки ‹ › листают его.</p>
+      <p><b>Поток</b> = доходы минус расходы за период. Это главный показатель месяца: если он положительный, вы живёте по средствам.</p>
+      <p>Диаграммы показывают, какие статьи съедают больше всего. Обычно 2–3 статьи дают половину расходов – с них и начинайте экономить.</p>
+      <p>Блок «Накопления» показывает, сколько вы перевели на счета подушки и инвестиций.</p>` },
+  { t: 'План и факт', h: `<p>План – это ваши лимиты на месяц. Нажмите на статью, введите сумму.</p>
+      <p>Приложение покажет три числа: сколько планировали, сколько потратили, и разницу. Полоса станет красной при перерасходе.</p>
+      <p>Совет: первый месяц не планируйте, просто записывайте. На второй месяц вы увидите реальные цифры и поставите выполнимый план.</p>` },
+  { t: 'Финансовое здоровье', h: `<p>Приложение считает показатели по вашим записям за 3, 6 или 12 месяцев:</p>
+      <ul><li><b>Норма сбережений</b> – какая доля дохода остаётся. Ориентир от 20%.</li>
+      <li><b>Дисциплина накоплений</b> – сколько дохода вы реально перевели на накопительные счета.</li>
+      <li><b>Обязательные расходы</b> – какая доля дохода уходит на то, что нельзя урезать. До 50% – хорошо.</li>
+      <li><b>Финансовая подушка</b> – на сколько месяцев хватит сбережений без дохода. Цель 3–6 месяцев.</li>
+      <li><b>Долговая нагрузка</b> – платежи по кредитам к доходу. До 20% – комфортно.</li>
+      <li><b>Изменение капитала</b> и <b>капитал в годовых расходах</b> – растёте ли вы и насколько независимы.</li></ul>
+      <p>Сводная оценка из 100 собирает всё это вместе. Ниже 40 – есть что чинить, выше 80 – отличное состояние.</p>` },
+  { t: 'Диагностика: точка А и точка Б', h: `<p>Десять вопросов о ваших финансах, две минуты. По ответам приложение определит ваш этап из шести: от «Кризиса» до «Пути к независимости».</p>
+      <p>Вы получите три главных шага именно для вашей ситуации и увидите, что нужно сделать, чтобы перейти на следующий этап – в точку Б.</p>
+      <p>Проходите заново раз в три месяца, чтобы видеть движение.</p>` },
+  { t: 'Подушка и инвестиции', h: `<p>Правильный порядок для большинства: сначала подушка, потом инвестиции.</p>
+      <ol class="steps"><li>Заведите отдельный счёт для подушки и укажите ему назначение «Финансовая подушка».</li>
+      <li>В день дохода переводите туда 20–30%, а живите на остаток. Это надёжнее, чем откладывать то, что осталось в конце месяца.</li>
+      <li>Когда на счёте накопится 6 месяцев ваших обязательных расходов, приложение само сменит цель на инвестиции.</li>
+      <li>Заведите инвестиционный счёт с назначением «Инвестиции» и переводите туда ту же долю.</li></ol>
+      <p>Стоимость инвестиций обновляйте операцией «Переоценка» раз в месяц.</p>` },
+  { t: 'Семейный бюджет', h: `<p>Настройки → Семейный бюджет → «Создать семью». Вы получите код, его нужно отправить супругу или супруге, они вводят его у себя.</p>
+      <p>Затем откройте счёт, которым хотите делиться, и включите <b>«Общий семейный счёт»</b>.</p>
+      <p><b>Общими становятся только отмеченные счета.</b> Остальные ваши счета и операции по ним видите только вы. Изменения появляются у второго участника в течение 15 секунд.</p>` },
+  { t: 'Резервная копия', h: `<p>Настройки → Данные → «Сохранить копию данных». Бот пришлёт файл в чат, его можно там и оставить.</p>
+      <p>Восстановление: «Восстановить из копии» → «Выбрать файл».</p>
+      <p>Делайте копию раз в месяц и перед каждым обновлением. Данные хранятся на устройстве и в облаке Telegram, но копия защитит от любой случайности.</p>` },
+  { t: 'Частые вопросы', h: `<p><b>Забыл записать трату.</b> Добавьте её задним числом: в форме есть поле даты. Или сделайте операцию «Остаток» – приложение само поправит разницу.</p>
+      <p><b>Снял деньги с карты.</b> Это перевод: с карты на наличные. Расхода тут нет.</p>
+      <p><b>Купил доллары.</b> Тоже перевод: со счёта в рублях на счёт в долларах. Приложение подставит курс, его можно исправить на свой.</p>
+      <p><b>Оплатил кредиткой.</b> Расход со счёта кредитки. Долг вырастет автоматически.</p>
+      <p><b>Погасил кредит.</b> Перевод с карты на счёт кредита. Проценты записывайте отдельным расходом со статьёй, у которой стоит отметка «Платёж по долгу».</p>
+      <p><b>Крипта выросла в цене.</b> Операция «Переоценка»: вписываете новую стоимость.</p>
+      <p><b>Цифры на телефоне и компьютере разные.</b> Подождите 15 секунд или перезагрузите приложение: ⋯ → Перезагрузить страницу.</p>` }
+];
+V.guide = { need() { return []; }, draw() {
+  return `<button class="back" data-act="tab" data-tab="settings">‹ Настройки</button><div class="title">Как пользоваться</div>
+    <div class="sub" style="margin:-6px 4px 12px">Полная инструкция по приложению. Можно читать подряд, а можно искать нужный раздел.</div>
+    <button class="btn ghost" data-act="tour-start" style="margin-bottom:12px">Пройти обучение заново</button>
+    ${GUIDE.map(g => `<div class="h1">${g.t}</div><div class="doc">${g.h}</div>`).join('')}
+    <div class="foot">Не нашли ответ? Напишите автору: ${esc(AUTHOR_CONTACT)}.</div>`;
+} };
+Object.assign(ACT, {
+  'tour-start': () => openTour(0),
+  'tour-next': () => { if (TOUR[UI.tourStep].last) return endTour(); openTour(UI.tourStep + 1); },
+  'tour-prev': () => openTour(UI.tourStep - 1),
+  'tour-skip': () => endTour(),
+  'tour-guide': () => endTour('guide')
+});
 /* ================= Старт ================= */
 SNAP = snapOf(S);
 themeColors(); recompute(); render();
 cloudLoad();
-if (!CS) setTimeout(famSync, 300);
+if (!CS) { setTimeout(famSync, 300); setTimeout(pingStat, 1500); }
 setInterval(() => { if (document.visibilityState === 'visible') famSync(); }, 30000);
 setInterval(() => { if (document.visibilityState === 'visible') cloudPoll(); }, 15000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { cloudPoll(); famSync(); } });
