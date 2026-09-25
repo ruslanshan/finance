@@ -172,6 +172,17 @@ textarea{min-height:140px;font-family:ui-monospace,Menlo,Consolas,monospace;font
 .sw input::after{content:"";position:absolute;top:3px;left:3px;width:23px;height:23px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .2s}
 .sw input:checked{background:var(--inc)}
 .sw input:checked::after{transform:translateX(19px)}
+.ltwrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 -16px;padding:0 16px}
+.ltwrap::-webkit-scrollbar{display:none}
+.lt{border-collapse:separate;border-spacing:0;font-size:13.5px;white-space:nowrap}
+.lt th,.lt td{padding:7px 0 7px 14px;text-align:right;border-bottom:1px solid var(--sep)}
+.lt th:first-child,.lt td:first-child{position:sticky;left:0;background:var(--bg);text-align:left;padding-left:0;padding-right:10px;z-index:1}
+.lt th:first-child::after,.lt td:first-child::after{content:"";position:absolute;top:0;right:0;bottom:0;width:1px;background:var(--sep)}
+.lt thead th{color:var(--hint);font-weight:600;font-size:12px}
+.lt thead th.yr{text-align:center;font-size:13px;color:var(--text);padding-bottom:2px;border-bottom:0}
+.lt tr.b td{font-weight:700}
+.lt tr.gap td{border-bottom:0;height:10px;padding:0}
+.lt td.fact{color:var(--hint)}
 .badge{font-size:11.5px;font-weight:500;color:var(--hint);background:var(--fill);border-radius:6px;padding:1px 6px;margin-left:4px;white-space:nowrap}
 .doc{background:var(--bg);border-radius:14px;padding:16px 18px;font-size:15px;line-height:1.5}
 .doc h2{font-size:16px;margin:18px 0 6px}.doc h2:first-child{margin-top:0}
@@ -200,7 +211,7 @@ textarea{min-height:140px;font-family:ui-monospace,Menlo,Consolas,monospace;font
  * © 2026 Шандриков Руслан Владимирович (Telegram @rushandrikov). Все права защищены.
  * Копирование, изменение и распространение кода без письменного разрешения автора запрещены.
  */
-const APP_VERSION = '1.12.1 · 25.09.2026';
+const APP_VERSION = '1.13 · 25.09.2026';
 // Тестовый режим: включается флагом в тестовой сборке ИЛИ автоматически, если адрес страницы
 // содержит «test» (например .../finance-test/). Вторая проверка страхует от случая, когда
 // в тестовый репозиторий по ошибке загрузили рабочий файл: данные всё равно останутся раздельными.
@@ -291,7 +302,7 @@ function defaults() {
   };
 }
 function loadLocal() { try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && Array.isArray(s.accounts)) return s; } catch (e) {} return null; }
-function normalize(s) { s.accounts = s.accounts || []; s.cats = s.cats || []; s.tx = s.tx || []; s.plans = s.plans || {}; s.del = s.del || {}; s.base = s.base || 'USD'; return migrate(s); }
+function normalize(s) { s.accounts = s.accounts || []; s.cats = s.cats || []; s.tx = s.tx || []; s.plans = s.plans || {}; s.del = s.del || {}; s.base = s.base || 'USD'; if (s.lt && !(+s.lt.d0 > 0)) s.lt = null; return migrate(s); }
 // v2: отметки для метрик здоровья – обязательные расходы, платежи по долгам, пассивный доход, ликвидные счета
 function migrate(s) {
   if ((s.v || 1) >= 2) return s;
@@ -774,8 +785,12 @@ V.stats = {
 
 /* ---------- План ---------- */
 V.plan = {
-  need() { const r = range(UI.planKind, UI.planAnchor); return txDates(r.from, r.to, []); },
+  need() {
+    if (UI.planKind === 'long') { const L = S.lt; if (!L) return []; const y0 = +L.y0 || new Date().getFullYear(); return txDates((y0 - 1) + '-01-01', today(), []); }
+    const r = range(UI.planKind, UI.planAnchor); return txDates(r.from, r.to, []);
+  },
   draw() {
+    if (UI.planKind === 'long') return drawLong();
     const r = range(UI.planKind, UI.planAnchor), f = flows(r.from, r.to), months = monthsIn(r.from, r.to), isM = UI.planKind === 'month';
     const pv = cid => months.reduce((s, mk) => s + planVal(mk, cid), 0);
     const hasPlan = cid => months.some(mk => S.plans[mk] && S.plans[mk][cid]);
@@ -799,7 +814,7 @@ V.plan = {
     };
     const e = sect('exp'), i = sect('inc');
     const d = (p, a, good) => { const x = a - p; return `<td class="num ${x === 0 ? '' : (good ? x > 0 : x < 0) ? 'inc' : 'exp'}">${fmt(x, B(), true)}</td>`; };
-    let html = `<div class="title">План и факт</div>${seg('plan-kind', [['month', 'Месяц'], ['year', 'Год']], UI.planKind)}${pnav('plan-nav', r.label)}
+    let html = `<div class="title">План и факт</div>${seg('plan-kind', [['month', 'Месяц'], ['year', 'Год'], ['long', 'Долгосрочный']], UI.planKind)}${pnav('plan-nav', r.label)}
       <div class="card pad"><table class="ptable"><tr><th></th><th>План</th><th>Факт</th><th>Разница</th></tr>
         <tr><td>Доходы</td><td class="num">${fmt(i.tp, B())}</td><td class="num">${fmt(f.inc, B())}</td>${d(i.tp, f.inc, true)}</tr>
         <tr><td>Расходы</td><td class="num">${fmt(e.tp, B())}</td><td class="num">${fmt(f.exp, B())}</td>${d(e.tp, f.exp, false)}</tr>
@@ -811,6 +826,138 @@ V.plan = {
     return html;
   }
 };
+
+/* ---------- Экран «Долгосрочный» ---------- */
+const ltHead = () => `<div class="title">План и факт</div>${seg('plan-kind', [['month', 'Месяц'], ['year', 'Год'], ['long', 'Долгосрочный']], UI.planKind)}`;
+function drawLong() {
+  const L = S.lt;
+  if (!L) return ltHead() + `<div style="height:12px"></div><div class="card pad">
+    <div class="b" style="font-size:17px">План на несколько лет вперёд</div>
+    <div class="sub" style="margin:6px 0 4px">Приложение возьмёт ваш доход и расход за прошлый год, заложит рост доходов и расходов, доходность вложений – и покажет, к какому капиталу вы придёте через 3, 5 или 10 лет. А ещё пересчитает это в ориентир на месяц.</div>
+    <button class="btn" data-act="lt-open" style="margin-top:12px">Настроить расчёт</button></div>`;
+  const rows = ltCalc(); if (!rows.length) return ltHead();
+  const cur = new Date().getFullYear();
+  const cu = (CUR[B()] || [B(), B()])[1];
+  const money = v => (v < 0 ? '−' : '') + new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(Math.abs(Math.round(v || 0))) + '\u00a0' + cu;
+  const cols = rows.map(r => ({ r, f: !!r.f }));
+  const cell = (r, get, cls) => `<td class="num ${cls || ''}">${money(get(r))}</td>` + (r.f ? `<td class="num fact ${cls || ''}">${money(get(r.f))}</td>` : '');
+  const line = (name, get, cls) => `<tr class="${cls || ''}"><td>${name}</td>${rows.map(r => cell(r, get, '')).join('')}</tr>`;
+  const per = (r, v) => v / 12, perF = (r, v) => v / (r.months || 12);
+
+  // ориентир на месяц по текущему году
+  const now = rows.find(r => r.year === cur) || rows[0];
+  const mk = today().slice(0, 7), mf = ltSum(mk + '-01', mk + '-31');
+  const mrow = (label, plan, fact, good) => { const diff = fact - plan; return `<tr><td>${label}</td><td class="num">${money(plan)}</td><td class="num">${money(fact)}</td><td class="num ${Math.abs(diff) < 1 ? '' : (good ? diff > 0 : diff < 0) ? 'inc' : 'exp'}">${(diff >= 0 ? '+' : '−') + money(Math.abs(diff)).replace('−', '')}</td></tr>`; };
+
+  let html = ltHead() + `<div style="height:12px"></div>`;
+  html += `<div class="card pad"><div class="sub">Ориентир на месяц · ${now.year} год</div>
+    <table class="ptable" style="margin-top:6px"><tr><th></th><th>План</th><th>Факт</th><th>Разница</th></tr>
+      ${mrow('Доход', now.d / 12, mf.inc, true)}
+      ${mrow('Расход', now.r / 12, mf.exp, false)}
+      ${mrow('Cashflow', now.cf / 12, mf.inc - mf.exp, true)}
+    </table>
+    <div class="sub" style="margin-top:8px">Факт за ${MONTHS[parseD(today()).getMonth()].toLowerCase()} по статьям, отмеченным «в долгосрочном плане».</div></div>`;
+
+  PEND.push(['ltChart', {
+    data: {
+      labels: rows.map(r => String(r.year)),
+      datasets: [
+        { type: 'bar', label: 'Капитал по плану', data: rows.map(r => Math.round(r.cap)), backgroundColor: alpha(COL.accent, .55), borderRadius: 4, order: 2 },
+        { type: 'line', label: 'Капитал по факту', data: rows.map(r => r.f ? Math.round(r.f.cap) : null), borderColor: COL.inc, backgroundColor: COL.inc, pointRadius: 3, borderWidth: 2, spanGaps: false, order: 1 }
+      ]
+    },
+    options: { maintainAspectRatio: false, animation: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, boxHeight: 10 } }, tooltip: { callbacks: { label: c => ' ' + c.dataset.label + ': ' + money(c.parsed.y) } } },
+      scales: { x: { grid: { display: false } }, y: { ticks: { callback: v => fmtCompact(v), maxTicksLimit: 5 } } } }
+  }]);
+  html += `<div class="h1">Капитал по годам</div><div class="card pad"><div class="chartbox"><canvas id="ltChart"></canvas></div></div>`;
+
+  html += `<div class="h1">Расчёт по годам</div><div class="card pad"><div class="ltwrap"><table class="lt">
+    <thead>
+      <tr><th></th>${rows.map(r => `<th class="yr" colspan="${r.f ? 2 : 1}">${r.year}</th>`).join('')}</tr>
+      <tr><th></th>${rows.map(r => r.f ? '<th>План</th><th>Факт</th>' : '<th>План</th>').join('')}</tr>
+    </thead><tbody>
+    ${line('Доходы', r => r.d)}
+    ${line('Расходы', r => -r.r)}
+    ${line('Cashflow', r => r.cf)}
+    ${line('Накопления', r => r.nak)}
+    ${line('% на Cashflow', r => r.iCf)}
+    ${line('% на Накопления', r => r.iCap)}
+    ${line('Капитал', r => r.cap, 'b')}
+    <tr class="gap"><td colspan="${1 + rows.reduce((n, r) => n + (r.f ? 2 : 1), 0)}"></td></tr>
+    <tr><td>Доход в месяц</td>${rows.map(r => `<td class="num">${money(r.d / 12)}</td>` + (r.f ? `<td class="num fact">${money(r.f.d / (r.f.months || 12))}</td>` : '')).join('')}</tr>
+    <tr><td>Расход в месяц</td>${rows.map(r => `<td class="num">${money(-r.r / 12)}</td>` + (r.f ? `<td class="num fact">${money(-r.f.r / (r.f.months || 12))}</td>` : '')).join('')}</tr>
+    <tr><td>Cashflow в месяц</td>${rows.map(r => `<td class="num">${money(r.cf / 12)}</td>` + (r.f ? `<td class="num fact">${money(r.f.cf / (r.f.months || 12))}</td>` : '')).join('')}</tr>
+    </tbody></table></div>
+    <div class="sub" style="margin-top:10px">Таблица листается вбок. «% на Cashflow» и «% на Накопления» – доход от вложений под ${(+L.inv || 0).toString().replace('.', ',')}% годовых. В факте это переоценка ваших активов, в столбце «% на Накопления».</div></div>`;
+
+  const over = rows.filter(r => r.over);
+  if (over.length) html += `<div class="warn" style="margin-top:12px">В ${over.length === rows.length ? 'каждом году' : 'годах ' + over.map(r => r.year).join(', ')} расходы выше половины дохода. Это ориентир, а не запрет: чтобы выйти на норму, поднимайте рост дохода или снижайте рост расходов.</div>`;
+
+  const off = S.cats.filter(c => !c.del && c.lt === false).length;
+  html += `<div class="card pad" style="margin-top:12px"><div class="sub">База расчёта: доход ${money(L.d0)} и расход ${money(L.r0)} за ${(+L.y0 || cur) - 1} год, накопления на старте ${money(L.n0)}. Рост дохода ${L.gi}% в год, рост расходов ${L.ge}% в год, доходность ${L.inv}%.</div>
+    <button class="link" data-act="lt-open">Изменить расчёт</button>
+    <button class="link" data-act="lt-tomonth">Перенести ориентир в план на месяц</button></div>`;
+  html += `<div class="foot">В факт попадают статьи, отмеченные «в долгосрочном плане»${off ? `; сейчас исключено статей: ${off}` : ''}. Отметка меняется в настройках, при нажатии на статью.<br>Факт текущего года в месяц делится на прошедшие месяцы, план – на 12.</div>`;
+  return html;
+}
+
+/* ================= Долгосрочный план ================= */
+// Формулы повторяют таблицу пользователя:
+//   Доходы(k)  = Доходы(k-1) × (1 + рост дохода)
+//   Расходы(k) = Расходы(k-1) × (1 + рост расходов)
+//   Cashflow   = Доходы − Расходы
+//   Накопления = Капитал прошлого года (в первый год – накопления на старте)
+//   «% на Cashflow»   = Cashflow × доходность
+//   «% на Накопления» = Накопления × доходность
+//   Капитал = Накопления + Cashflow + «% на Cashflow» + «% на Накопления»
+const ltDefaults = () => ({ y0: new Date().getFullYear(), years: 5, d0: 0, r0: 0, n0: 0, inv: 20, gi: 20, ge: 10 });
+const inLt = c => !c || c.lt !== false; // статья участвует в долгосрочном плане, пока её не выключили
+// Факт за период: доходы и расходы по отмеченным статьям + переоценка активов
+function ltSum(from, to) {
+  const o = { inc: 0, exp: 0, rev: 0, n: 0 };
+  for (const t of SORTED) {
+    if (t.d < from) continue; if (t.d > to) break;
+    const a = accById(t.a); if (!a) continue;
+    if (t.t === 'inc' || t.t === 'exp') {
+      if (!inLt(catById(t.c))) continue;
+      const v = conv(t.amt, a.cur, S.base, t.d);
+      if (t.t === 'inc') o.inc += v; else o.exp += v;
+      o.n++;
+    } else if (t.t === 'rev') o.rev += conv(t._delta || 0, a.cur, S.base, t.d);
+  }
+  return o;
+}
+function ltCalc() {
+  const L = S.lt; if (!L) return [];
+  const gi = 1 + (+L.gi || 0) / 100, ge = 1 + (+L.ge || 0) / 100, inv = (+L.inv || 0) / 100;
+  const cy = new Date().getFullYear(), n = Math.max(1, Math.min(40, +L.years || 5));
+  let d = +L.d0 || 0, r = +L.r0 || 0, capP = +L.n0 || 0, capF = +L.n0 || 0, factRun = true;
+  const out = [];
+  for (let k = 0; k < n; k++) {
+    const year = (+L.y0 || cy) + k;
+    d *= gi; r *= ge;
+    const cf = d - r, iCf = cf * inv, iCap = capP * inv;
+    const row = { year, d, r, cf, nak: capP, iCf, iCap, cap: capP + cf + iCf + iCap, over: d > 0 && r > d * 0.5 };
+    capP = row.cap;
+    if (year <= cy && factRun) {
+      const f = ltSum(year + '-01-01', year + '-12-31'), fcf = f.inc - f.exp;
+      const months = year < cy ? 12 : new Date().getMonth() + 1;
+      row.f = { d: f.inc, r: f.exp, cf: fcf, nak: capF, iCf: 0, iCap: f.rev, cap: capF + fcf + f.rev, n: f.n, months };
+      capF = row.f.cap;
+      if (year === cy) factRun = false;
+    }
+    out.push(row);
+  }
+  return out;
+}
+// База из учёта: прошлый календарный год и текущий капитал
+function ltFromRecords(y0) {
+  const py = (y0 || new Date().getFullYear()) - 1;
+  let f = ltSum(py + '-01-01', py + '-12-31');
+  let note = 'за ' + py + ' год';
+  if (!f.n) { const to = today(), from = addDays(to, -364); f = ltSum(from, to); note = 'за последние 12 месяцев'; }
+  return { d0: Math.round(f.inc), r0: Math.round(f.exp), n0: Math.round(capitalAt(today()).net), note, n: f.n };
+}
 
 /* ---------- Настройки ---------- */
 V.settings = {
@@ -1026,6 +1173,7 @@ function openCat(id, kind, back) {
 }
 const catHtml = () => `<div class="stitle">${CF.id ? 'Статья' : CF.kind === 'inc' ? 'Новый источник дохода' : 'Новая статья расходов'}</div>
   ${field('Иконка и название', `<div class="two"><input data-cf="icon" value="${esc(CF.icon)}" maxlength="4" aria-label="Иконка"><input data-cf="name" value="${esc(CF.name)}" placeholder="Название" maxlength="40"></div>`)}
+  ${toggle('cf', 'lt', CF.lt !== false, 'Входит в долгосрочный план', 'Доходы и расходы по этой статье попадают в факт долгосрочного плана')}
   ${CF.kind === 'exp' ? toggle('cf', 'must', CF.must, 'Обязательный расход', 'То, без чего не прожить: жильё, еда, транспорт, кредиты') + toggle('cf', 'debt', CF.debt, 'Платёж по долгу', 'Проценты и платежи по кредитам – для расчёта долговой нагрузки') : toggle('cf', 'passive', CF.passive, 'Пассивный доход', 'Приходит без вашей работы: проценты, дивиденды, аренда')}
   <button class="btn" data-act="cat-save">${CF.id ? 'Сохранить' : 'Добавить'}</button>
   ${CF.back ? '<button class="btn ghost" data-act="sheet-close">Отмена</button>' : ''}
@@ -1034,6 +1182,7 @@ function saveCat() {
   const name = (CF.name || '').trim(); if (!name) return toast('Введите название');
   let id = CF.id;
   const fl = CF.kind === 'exp' ? { must: !!CF.must, debt: !!CF.debt } : { passive: !!CF.passive };
+  fl.lt = CF.lt === false ? false : undefined;
   if (id) Object.assign(catById(id), { name, icon: (CF.icon || '').trim() }, fl);
   else { id = uid(); S.cats.push(Object.assign({ id, name, icon: (CF.icon || '').trim(), kind: CF.kind }, fl)); }
   persist();
@@ -1071,6 +1220,70 @@ async function copyPlan() {
   if (!src || !Object.keys(src).length) return toast('В прошлом месяце план не задан');
   if (S.plans[mk] && Object.keys(S.plans[mk]).length && !(await ask('Заменить текущий план планом прошлого месяца?'))) return;
   S.plans[mk] = JSON.parse(JSON.stringify(src)); persist(); toast('План скопирован'); render();
+}
+
+/* ---------- Долгосрочный план: настройка ---------- */
+let LT = null;
+function openLt() {
+  LT = Object.assign(ltDefaults(), S.lt || {});
+  ['d0', 'r0', 'n0'].forEach(k => { if (!S.lt) LT[k] = ''; });
+  openSheet('lt', ltHtml());
+}
+function ltHtml() {
+  const yrs = [3, 5, 10, 15, 20], cu = (CUR[B()] || [B(), B()])[1];
+  const amt = (k, label, ph) => field(label, `<div class="amtwrap"><input class="num" data-lf="${k}" inputmode="decimal" placeholder="${ph}" value="${esc(LT[k] === '' || LT[k] == null ? '' : LT[k])}"><span>${cu}</span></div>`);
+  const pct = (k, label, hint) => field(label, `<div class="amtwrap"><input class="num" data-lf="${k}" inputmode="decimal" value="${esc(LT[k])}"><span>%</span></div>`) + `<div class="sub" style="margin:-8px 4px 12px">${hint}</div>`;
+  return `<div class="stitle">Долгосрочный план</div>
+    ${field('На сколько лет', `<div class="chips">${yrs.map(y => `<button class="chip ${+LT.years === y ? 'on' : ''}" data-act="lt-years" data-k="${y}">${y} лет</button>`).join('')}
+      <input data-lf="years" inputmode="numeric" style="width:76px;text-align:center" value="${esc(LT.years)}"></div>`)}
+    ${field('Первый год плана', `<input data-lf="y0" inputmode="numeric" value="${esc(LT.y0)}">`)}
+    <div class="inset"><div class="sub">База: ваши итоги за ${(+LT.y0 || 0) - 1} год</div>
+      <button class="link" data-act="lt-fill" style="padding:6px 0 0">Подставить из учёта</button></div>
+    ${amt('d0', 'Доход за прошлый год', '0')}
+    ${amt('r0', 'Расход за прошлый год', '0')}
+    ${amt('n0', 'Накопления на начало', '0')}
+    ${pct('inv', 'Доходность вложений, % годовых', 'Начисляется и на накопленный капитал, и на Cashflow года.')}
+    ${pct('gi', 'Рост дохода, % в год', 'Ориентир – от 20%.')}
+    ${pct('ge', 'Рост расходов, % в год', 'Ориентир – около 10% и не больше половины дохода.')}
+    <button class="btn" data-act="lt-save">${S.lt ? 'Сохранить' : 'Рассчитать'}</button>
+    ${S.lt ? '<button class="btn danger" data-act="lt-del">Удалить долгосрочный план</button>' : ''}`;
+}
+function saveLt() {
+  const n = k => { const v = num(LT[k]); return isFinite(v) ? v : NaN; };
+  const d0 = n('d0'), r0 = n('r0'), n0 = LT.n0 === '' ? 0 : n('n0');
+  if (!(d0 > 0)) return toast('Введите доход за прошлый год');
+  if (!(r0 >= 0)) return toast('Введите расход за прошлый год');
+  if (!isFinite(n0)) return toast('Проверьте накопления на начало');
+  const years = Math.max(1, Math.min(40, Math.round(n('years') || 5)));
+  const y0 = Math.round(n('y0') || new Date().getFullYear());
+  if (y0 < 2000 || y0 > 2100) return toast('Проверьте год начала плана');
+  ['inv', 'gi', 'ge'].forEach(k => { const v = n(k); LT[k] = isFinite(v) ? v : 0; });
+  S.lt = { y0, years, d0: round(d0, 2), r0: round(r0, 2), n0: round(n0, 2), inv: LT.inv, gi: LT.gi, ge: LT.ge };
+  persist(); closeSheet(true); UI.planKind = 'long'; render(); toast('Расчёт обновлён');
+}
+// Перенос месячного ориентира в обычный план на месяц: суммы делятся между статьями
+// по их доле в фактических итогах за последние 12 месяцев
+async function ltToMonth() {
+  const rows = ltCalc(), cur = new Date().getFullYear(), row = rows.find(r => r.year === cur);
+  if (!row) return toast('В плане нет текущего года');
+  const mk = today().slice(0, 7);
+  if (S.plans[mk] && Object.keys(S.plans[mk]).length && !(await ask('План на этот месяц уже задан. Заменить его ориентиром из долгосрочного плана?'))) return;
+  const to = today(), from = addDays(to, -364), hist = flows(from, to);
+  const put = (kind, total, by) => {
+    const cats = S.cats.filter(c => c.kind === kind && !c.del && inLt(c));
+    if (!cats.length || !(total > 0)) return 0;
+    const sum = cats.reduce((x, c) => x + (by[c.id] || 0), 0);
+    cats.forEach(c => {
+      const share = sum > 0 ? (by[c.id] || 0) / sum : 1 / cats.length;
+      const v = round(total * share, 2);
+      if (v > 0) (S.plans[mk] = S.plans[mk] || {})[c.id] = { a: v, c: S.base };
+    });
+    return cats.length;
+  };
+  S.plans[mk] = {};
+  const ni = put('inc', row.d / 12, hist.byInc), ne = put('exp', row.r / 12, hist.byExp);
+  persist(); UI.planKind = 'month'; UI.planAnchor = today(); render();
+  toast(`План на месяц заполнен: статей ${ni + ne}`);
 }
 
 /* ---------- Данные ---------- */
@@ -1206,7 +1419,17 @@ const ACT = {
   'stat-nav': el => { UI.statAnchor = shift(UI.statKind, UI.statAnchor, +el.dataset.dir); render(); },
   'ops-nav': el => { const [y, m] = UI.opsMonth.split('-').map(Number); UI.opsMonth = iso(new Date(y, m - 1 + +el.dataset.dir, 1)).slice(0, 7); render(); },
   'ops-filter': el => { UI.opsFilter = el.dataset.k; render(); },
-  'plan-kind': el => { UI.planKind = el.dataset.k; render(); },
+  'plan-kind': el => { UI.planKind = el.dataset.k; window.scrollTo(0, 0); render(); },
+  'lt-open': () => openLt(),
+  'lt-years': el => { LT.years = +el.dataset.k; setSheet(ltHtml()); },
+  'lt-fill': () => {
+    const f = ltFromRecords(+num(LT.y0) || new Date().getFullYear());
+    if (!f.n) return toast('В учёте пока нет доходов и расходов за прошлый период');
+    LT.d0 = f.d0; LT.r0 = f.r0; LT.n0 = f.n0; setSheet(ltHtml()); toast('Подставлено ' + f.note);
+  },
+  'lt-save': () => saveLt(),
+  'lt-del': async () => { if (!(await ask('Удалить долгосрочный план? Месячные планы и операции останутся на месте.'))) return; S.lt = null; persist(); closeSheet(true); render(); toast('Долгосрочный план удалён'); },
+  'lt-tomonth': () => ltToMonth(),
   'plan-nav': el => { UI.planAnchor = shift(UI.planKind, UI.planAnchor, +el.dataset.dir); render(); },
   'tx-open': el => { const t = S.tx.find(x => x.id === el.dataset.id); if (!t) return; if (t.sh && (!accById(t.a) || (t.t === 'tr' && !accById(t.a2)))) return toast('Операция затрагивает личный счёт другого участника – изменить её может только автор'); openOp(null, t); },
   'op-type': el => { F.t = el.dataset.k; setSheet(opHtml()); afterOpDraw(); },
@@ -1236,6 +1459,7 @@ document.addEventListener('input', e => {
   else if (d.af && AF) { AF[d.af] = el.value; }
   else if (d.cf && CF) CF[d.cf] = el.value;
   else if (d.pf && PF) PF[d.pf] = el.value;
+  else if (d.lf && LT) LT[d.lf] = el.value;
 });
 document.addEventListener('change', e => {
   const el = e.target, d = el.dataset;
@@ -1932,6 +2156,7 @@ Object.assign(ACT, {
 /* ================= Что нового ================= */
 // Список обновлений, новое – сверху. Показывается один раз после установки новой версии.
 const CHANGELOG = [
+  { v: '1.13', d: '25.09.2026', items: ['В «Плане» появился раздел «Долгосрочный»: расчёт на 3–20 лет вперёд с ростом доходов и расходов и доходностью вложений.', 'Таблица по годам: доходы, расходы, Cashflow, накопления, капитал – и пересчёт в ориентир на месяц.', 'Кнопка переносит месячный ориентир в обычный план по статьям. У статьи появилась отметка «входит в долгосрочный план».'] },
   { v: '1.12', d: '25.09.2026', items: ['Исправлено: если телефон и компьютер сохраняли изменения в одну и ту же секунду, они могли навсегда разойтись и показывать разные суммы. Теперь такого не происходит.', 'Семейный бюджет: кнопка «Сверить данные с сервером». Если у вас и у второго участника суммы по общему счёту разошлись, она вернёт недостающие операции и уберёт лишние.', 'В настройках видно время последней синхронизации, а сбой синхронизации теперь показывается на главном экране.', 'Резервная копия: в имени файла и внутри него сохраняется время выгрузки, а в настройках видно, когда копия делалась в последний раз.'] },
   { v: '1.11', d: '23.09.2026', items: ['Приложение раз в сутки сообщает серверу, что было открыто: это нужно, чтобы автор видел, сколько людей им пользуются.', 'Передаются только дата, версия и общие признаки – содержимое ваших финансов не отправляется. Отключить: Настройки → Данные.'] },
   { v: '1.10', d: '22.09.2026', items: ['При первом входе появляется пошаговое обучение: девять коротких экранов по всем разделам.', 'Появилась полная инструкция: Настройки → О приложении → «Как пользоваться».'] },
@@ -2038,6 +2263,17 @@ const GUIDE = [
       <p><b>Поток</b> = доходы минус расходы за период. Это главный показатель месяца: если он положительный, вы живёте по средствам.</p>
       <p>Диаграммы показывают, какие статьи съедают больше всего. Обычно 2–3 статьи дают половину расходов – с них и начинайте экономить.</p>
       <p>Блок «Накопления» показывает, сколько вы перевели на счета подушки и инвестиций.</p>` },
+  { t: 'Долгосрочный план', h: `<p>Вкладка «План» → «Долгосрочный». Считает на 3–20 лет вперёд от ваших прошлогодних итогов.</p>
+      <p>Вы задаёте шесть чисел: доход и расход за прошлый год, накопления на начало, рост дохода в год, рост расходов в год и доходность вложений. Кнопка «Подставить из учёта» заполнит базу вашими реальными цифрами.</p>
+      <p>Как считается каждый год:</p>
+      <ul><li><b>Доходы</b> = доходы прошлого года плюс процент роста.</li>
+      <li><b>Расходы</b> = расходы прошлого года плюс свой процент роста.</li>
+      <li><b>Cashflow</b> = доходы минус расходы.</li>
+      <li><b>Накопления</b> = капитал, который перешёл с прошлого года.</li>
+      <li><b>«% на Cashflow»</b> и <b>«% на Накопления»</b> – доход от вложений: заданная доходность начисляется и на Cashflow года, и на накопленный капитал.</li>
+      <li><b>Капитал</b> = накопления + Cashflow + оба процента. Он и переходит в следующий год.</li></ul>
+      <p>Ниже всё пересчитано в месяц – это и есть ваш ориентир на каждый месяц. Кнопка «Перенести ориентир в план на месяц» разложит эти суммы по статьям пропорционально вашим тратам за последний год.</p>
+      <p>В факт попадают только статьи с отметкой «Входит в долгосрочный план»; отметка включается нажатием на статью в настройках. В факте «% на Накопления» – это переоценка ваших активов за год.</p>` },
   { t: 'План и факт', h: `<p>План – это ваши лимиты на месяц. Нажмите на статью, введите сумму.</p>
       <p>Приложение покажет три числа: сколько планировали, сколько потратили, и разницу. Полоса станет красной при перерасходе.</p>
       <p>Совет: первый месяц не планируйте, просто записывайте. На второй месяц вы увидите реальные цифры и поставите выполнимый план.</p>` },
