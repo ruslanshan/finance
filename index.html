@@ -200,7 +200,7 @@ textarea{min-height:140px;font-family:ui-monospace,Menlo,Consolas,monospace;font
  * © 2026 Шандриков Руслан Владимирович (Telegram @rushandrikov). Все права защищены.
  * Копирование, изменение и распространение кода без письменного разрешения автора запрещены.
  */
-const APP_VERSION = '1.11 · 23.09.2026';
+const APP_VERSION = '1.12.1 · 25.09.2026';
 // Тестовый режим: включается флагом в тестовой сборке ИЛИ автоматически, если адрес страницы
 // содержит «test» (например .../finance-test/). Вторая проверка страхует от случая, когда
 // в тестовый репозиторий по ошибке загрузили рабочий файл: данные всё равно останутся раздельными.
@@ -369,29 +369,34 @@ function mergeStates(L, R) {
 /* ---- Синхронизация через Telegram CloudStorage ----
    • Изменения других устройств подтягиваются каждые 15 секунд и при возврате в приложение.
    • Перед записью в облако проверяется, не записало ли туда что-то другое устройство; если да –
-     данные сначала сливаются по записям, и только потом сохраняются. Ничьи правки не затираются. */
+     данные сначала сливаются по записям, и только потом сохраняются. Ничьи правки не затираются.
+   • Что лежит в облаке, определяется меткой содержимого (tok), а не временем: часы устройств
+     идут по-разному, и сравнение по времени оставляло устройства расходиться навсегда. */
 const CS = TGV('6.9') ? tg.CloudStorage : null;
 const CHUNK = 3800;
 const LINK = 'finapp_cloud_linked' + SFX, BACKUP = 'finapp_backup' + SFX, SEEN = 'finapp_cloud_seen' + SFX;
 const CK = TEST_MODE ? 't_' : 'c_'; // ключи в облаке Telegram: у тестовой копии свои
 let cloudReady = !CS, cloudPending = false, cloudTimer = null, cloudBusy = false, cloudAgain = false, cloudTries = 0;
-let cloudSeen = +(localStorage.getItem(SEEN) || 0);
-const setSeen = v => { cloudSeen = v; try { localStorage.setItem(SEEN, String(v)); } catch (e) {} };
+let cloudSeen = localStorage.getItem(SEEN) || '';       // метка содержимого, которое мы последний раз видели
+const cloudTag = m => m ? String(m.tok || ('u' + m.updated)) : '';
+const newTok = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const setSeen = v => { cloudSeen = String(v || ''); try { localStorage.setItem(SEEN, cloudSeen); } catch (e) {} };
 function scheduleCloud() { if (!CS) return; if (!cloudReady) { cloudPending = true; return; } clearTimeout(cloudTimer); cloudTimer = setTimeout(cloudSave, 1200); }
 function readMeta(cb) { CS.getItem(CK + 'meta', (e, m) => { if (e) return cb(null, true); let meta = null; try { meta = m ? JSON.parse(m) : null; } catch (x) {} cb(meta, false); }); }
 function readCloud(meta, cb) {
   const keys = []; for (let i = 0; i < meta.n; i++) keys.push(CK + i);
   CS.getItems(keys, (e, vals) => {
     let d = null;
-    try { if (!e && vals) d = JSON.parse(keys.map(k => vals[k] || '').join('')); } catch (x) {}
+    // длина из meta страхует от случая, когда два устройства писали куски одновременно
+    try { if (!e && vals) { const str = keys.map(k => vals[k] || '').join(''); if (!meta.len || str.length === meta.len) d = JSON.parse(str); } } catch (x) {}
     cb(d && Array.isArray(d.accounts) ? d : null);
   });
 }
 // Сливает облачные данные с локальными. Возвращает true, если после слияния облако нужно перезаписать.
 function absorb(d, meta) {
   const before = contentKey(S), merged = mergeStates(S, d), mk = contentKey(merged), needWrite = mk !== contentKey(d);
-  S = merged; SNAP = snapOf(S); S.updated = needWrite ? Date.now() : (d.updated || meta.updated);
-  saveLocal(); setSeen(meta.updated); recompute();
+  S = merged; SNAP = snapOf(S); S.updated = needWrite ? Date.now() : Math.max(S.updated || 0, d.updated || 0);
+  saveLocal(); setSeen(cloudTag(meta)); recompute();
   if (mk !== before) { if (UI.sheet === 'onb' && S.onb) closeSheet(true); render(); }
   return needWrite;
 }
@@ -404,20 +409,22 @@ function cloudSave() {
     const write = () => {
       const str = ser(), n = Math.ceil(str.length / CHUNK), old = meta ? meta.n || 0 : 0;
       if (n > 1000) { toast('Данных слишком много для облака Telegram'); return cloudDone(); }
-      let left = n, failed = false; const upd = S.updated;
+      let left = n, failed = false; const upd = S.updated, tok = newTok();
       for (let i = 0; i < n; i++) CS.setItem(CK + i, str.slice(i * CHUNK, (i + 1) * CHUNK), e => {
         if (e) failed = true;
         if (--left) return;
         if (failed) return cloudDone();
-        CS.setItem(CK + 'meta', JSON.stringify({ n, updated: upd }), () => {
-          setSeen(upd);
+        CS.setItem(CK + 'meta', JSON.stringify({ n, updated: upd, tok, len: str.length }), () => {
+          setSeen(tok);
           const extra = []; for (let j = n; j < old; j++) extra.push(CK + j);
           if (extra.length) CS.removeItems(extra);
           cloudDone();
+          // если в этот же момент писало другое устройство, метка окажется чужой – тогда дочитаем и сольём
+          setTimeout(cloudPoll, 800);
         });
       });
     };
-    if (meta && meta.n && meta.updated > cloudSeen) {
+    if (meta && meta.n && cloudTag(meta) !== cloudSeen) {
       readCloud(meta, d => { if (!d) return cloudDone(); absorb(d, meta); S.updated = Date.now(); saveLocal(); write(); });
     } else write();
   });
@@ -425,7 +432,7 @@ function cloudSave() {
 function cloudPoll() {
   if (!CS || !cloudReady || cloudBusy) return;
   readMeta(meta => {
-    if (!meta || !meta.n || meta.updated <= cloudSeen || cloudBusy) return;
+    if (!meta || !meta.n || cloudTag(meta) === cloudSeen || cloudBusy) return;
     readCloud(meta, d => { if (d && !cloudBusy && absorb(d, meta)) scheduleCloud(); });
   });
 }
@@ -446,7 +453,7 @@ function cloudLoad() {
   readMeta((meta, err) => {
     if (err) return fail();
     if (!meta || !meta.n) { if (S.updated) cloudPending = true; return done(); }
-    if (linked && meta.updated <= cloudSeen) { if (S.updated > meta.updated) cloudPending = true; return done(); }
+    if (linked && cloudSeen && cloudTag(meta) === cloudSeen) { if (S.updated > (meta.updated || 0)) cloudPending = true; return done(); }
     if (linked && !cloudSeen && meta.updated <= S.updated) { cloudPending = true; return done(); } // переход со старой версии: локальные данные свежее
     readCloud(meta, d => {
       if (!d) return fail();
@@ -454,7 +461,7 @@ function cloudLoad() {
         // первое подключение устройства или переход со старой версии – берём облако целиком
         if (S.tx.length && ser() !== JSON.stringify(d)) { try { localStorage.setItem(BACKUP, JSON.stringify({ at: Date.now(), data: JSON.parse(ser()) })); } catch (x) {} }
         S = normalize(d); SNAP = snapOf(S); cloudPending = false;
-        saveLocal(); setSeen(meta.updated); recompute();
+        saveLocal(); setSeen(cloudTag(meta)); recompute();
         if (UI.sheet === 'onb' && S.onb) closeSheet(true);
         render(); if (!linked) toast('Данные загружены из облака Telegram');
         return done();
@@ -666,12 +673,13 @@ V.home = {
     let rates = '';
     if (multiCur()) rates = RS.latest ? `Курсы валют на ${fmtDate(RS.latest)}` : RS.loading ? 'Загружаю курсы валют…' : 'Курсы валют не загружены – проверьте интернет и обновите в настройках';
     const outside = !(tg && tg.initData), oldTg = !outside && !CS;
+    const famNote = inFam() && FAM.err ? `<div class="warn">Общие счета сейчас не синхронизируются: ${esc(famErrText(FAM.err))}. Суммы по ним могут отличаться от тех, что видит второй участник.</div>` : '';
     const testNote = TEST_MODE ? '<div class="warn">Это тестовая копия. Её данные хранятся отдельно от рабочего приложения: что угодно здесь можно удалять и ломать.</div>' : '';
     const note = outside ? `<div class="warn"><b>Открыто вне Telegram.</b> Здесь данные хранятся только в этом браузере и не синхронизируются с Telegram. Чтобы работать со своими данными на компьютере, откройте бота в <a href="https://web.telegram.org/" target="_blank" rel="noopener" style="color:inherit">Telegram Web</a> или в Telegram Desktop.</div>`
       : oldTg ? '<div class="warn">Обновите Telegram – в этой версии не работает синхронизация между устройствами.</div>' : '';
     return `
       <div class="hdr"><div class="title">Обзор${TEST_MODE ? ' <span class="badge" style="background:var(--exp);color:#fff">ТЕСТ</span>' : ''}</div><button class="iconbtn" data-act="tab" data-tab="settings" aria-label="Настройки"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button></div>
-      ${testNote}${note}
+      ${testNote}${note}${famNote}
       <div class="hero">
         <div class="lbl">Капитал</div>
         <div class="net num">${fmt(cap.net, B())}</div>
@@ -832,7 +840,7 @@ V.settings = {
       <div class="h1">Данные</div>
       <div class="card"><button class="link" data-act="export">Сохранить копию данных</button><button class="link" data-act="import">Восстановить из копии</button><label class="sw" style="padding:12px 0"><span>Отправлять статистику использования<small>Только дата открытия и общие признаки: версия, число операций, используете ли семейный бюджет. Содержимое финансов не передаётся</small></span><input type="checkbox" data-stat="1" ${S.noStat ? '' : 'checked'}></label>
       ${backupInfo() ? `<button class="link" data-act="restore-backup">Восстановить копию с устройства от ${backupInfo()}</button>` : ''}<button class="link" data-act="reset" style="color:var(--exp)">Удалить все данные</button></div>
-      <div class="foot">${CS ? 'Данные хранятся на устройстве и синхронизируются через облако Telegram.' : 'Данные хранятся на этом устройстве. Сделайте экспорт, чтобы не потерять их.'} Операций: ${S.tx.length}.</div>
+      <div class="foot">${CS ? 'Данные хранятся на устройстве и синхронизируются через облако Telegram.' : 'Данные хранятся на этом устройстве. Сделайте экспорт, чтобы не потерять их.'} Операций: ${S.tx.length}.<br>${S.bkAt ? 'Последняя копия: ' + dtLabel(S.bkAt) : 'Копия ещё не создавалась – сделайте её, чтобы не потерять данные'}</div>
       <div class="h1">О приложении</div>
       <div class="card"><button class="link" data-act="show-policy">Политика конфиденциальности</button><button class="link" data-act="tab" data-tab="guide">Как пользоваться</button><button class="link" data-act="news-open">Что нового</button><button class="link" data-act="tab" data-tab="about">О приложении и авторские права</button></div>
       <div class="foot">«Точка Б» · версия ${APP_VERSION}${TEST_MODE ? ' · ТЕСТОВАЯ СРЕДА' : ''}<br>Адрес страницы: ${esc(PAGE_URL)}<br>© 2026 ${esc(AUTHOR_NAME)}. Все права защищены.</div>`;
@@ -1066,7 +1074,18 @@ async function copyPlan() {
 }
 
 /* ---------- Данные ---------- */
-const backupName = () => 'tochka-b-' + today() + '.json';
+const pad2 = n => String(n).padStart(2, '0');
+const dtLabel = ts => { const d = new Date(ts); return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' }) + ', ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()); };
+// Имя файла с датой и временем выгрузки: за день можно сделать несколько копий, они не перезапишут друг друга
+const backupName = ts => { const d = new Date(ts); return 'tochka-b-' + iso(d) + '-' + pad2(d.getHours()) + pad2(d.getMinutes()) + '.json'; };
+// В файл добавляется время выгрузки и версия приложения; в самих данных они не хранятся
+function backupJson(ts) {
+  const o = JSON.parse(ser());
+  o.exportedAt = new Date(ts).toISOString();
+  o.exportedApp = APP_VERSION;
+  return JSON.stringify(o);
+}
+function markBackup(ts) { S.bkAt = ts; persist(); }
 function openExport() {
   const inTg = !!(tg && tg.initData), viaBot = famAvail();
   // В Telegram обычное скачивание файла недоступно: встроенный браузер вместо сохранения
@@ -1092,7 +1111,7 @@ function openExportText() {
     <div class="sub" style="margin:-6px 2px 12px">Запасной способ: скопируйте текст и сохраните его, например в «Избранном».</div>
     <button class="btn" data-act="copy-export">Скопировать</button>
     <button class="btn ghost" data-act="sheet-close">Закрыть</button>
-    <textarea readonly id="expdata" style="margin-top:12px">${esc(ser())}</textarea>`);
+    <textarea readonly id="expdata" style="margin-top:12px">${esc(backupJson(Date.now()))}</textarea>`);
 }
 function openImport() {
   openSheet('imp', `<div class="stitle">Восстановление из копии</div>
@@ -1110,20 +1129,22 @@ function openImportText() {
     <div class="foot">Текущие данные будут заменены.</div>`);
 }
 function downloadBackup() {
+  const ts = Date.now();
   try {
-    const url = URL.createObjectURL(new Blob(['\ufeff' + ser()], { type: 'application/json;charset=utf-8' }));
+    const url = URL.createObjectURL(new Blob(['\ufeff' + backupJson(ts)], { type: 'application/json;charset=utf-8' }));
     const a = document.createElement('a');
-    a.href = url; a.download = backupName(); a.rel = 'noopener';
+    a.href = url; a.download = backupName(ts); a.rel = 'noopener';
     document.body.appendChild(a); a.click();
     setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 2000);
-    toast('Файл сохранён');
+    markBackup(ts); closeSheet(true); toast('Копия сохранена: ' + dtLabel(ts)); render();
   } catch (e) { toast('Не удалось сохранить файл, попробуйте «Показать данные текстом»'); }
 }
 async function sendBackupToChat(btn) {
   if (btn) btn.textContent = 'Отправляю…';
+  const ts = Date.now();
   try {
-    await api('/backup', { name: backupName(), data: ser() });
-    closeSheet(true); toast('Файл отправлен в чат с ботом');
+    await api('/backup', { name: backupName(ts), data: backupJson(ts), at: ts });
+    markBackup(ts); closeSheet(true); toast('Копия отправлена в чат: ' + dtLabel(ts)); render();
   } catch (e) {
     if (btn) btn.textContent = 'Отправить файл в чат с ботом';
     toast(famErrText(e.message));
@@ -1131,8 +1152,11 @@ async function sendBackupToChat(btn) {
 }
 async function applyBackup(d) {
   if (!d || !Array.isArray(d.accounts) || !Array.isArray(d.tx)) return toast('Это не копия данных «Точки Б»');
-  if (!(await ask(`В копии: счетов ${d.accounts.length}, операций ${d.tx.length}. Сейчас в приложении операций ${S.tx.length}. Заменить текущие данные копией?`))) return;
-  S = normalize(d); S.onb = true; persist(); closeSheet(true); toast('Данные восстановлены'); render();
+  const when = d.exportedAt && !isNaN(Date.parse(d.exportedAt)) ? dtLabel(Date.parse(d.exportedAt)) : null;
+  const head = when ? `Копия от ${when}.\n` : '';
+  if (!(await ask(`${head}В копии: счетов ${d.accounts.length}, операций ${d.tx.length}. Сейчас в приложении операций ${S.tx.length}. Заменить текущие данные копией?`))) return;
+  delete d.exportedAt; delete d.exportedApp;
+  S = normalize(d); S.onb = true; persist(); closeSheet(true); toast(when ? 'Восстановлена копия от ' + when : 'Данные восстановлены'); render();
 }
 function readBackupFile(file) {
   if (!file) return;
@@ -1552,7 +1576,8 @@ ACT['restore-backup'] = async () => {
 /* ================= Семейный бюджет ================= */
 // Общие счета хранятся на сервере семьи (Cloudflare Worker, адрес – FAMILY_API в начале файла).
 // Личные счета и операции по ним на сервер не отправляются.
-const FAM = { err: '', busy: false, loading: false };
+const FAM = { err: '', busy: false, loading: false, at: 0, checking: false };
+let famFull = true; // первая синхронизация в сеансе – полная сверка с сервером
 const myId = () => { try { return (tg.initDataUnsafe.user || {}).id || 0; } catch (e) { return 0; } };
 const myName = () => { try { const u = tg.initDataUnsafe.user; return [u.first_name, u.last_name].filter(Boolean).join(' ') || 'Участник'; } catch (e) { return 'Участник'; } };
 const famAvail = () => !!(FAMILY_API && tg && tg.initData);
@@ -1622,7 +1647,9 @@ function removeSharedAccount(id) {
   S.accounts = S.accounts.filter(a => a.id !== id);
   S.tx = S.tx.filter(t => { if (t.a !== id && t.a2 !== id) return true; const other = t.a === id ? t.a2 : t.a; return !!(other && accById(other)); });
 }
-function famMerge(r) {
+// full = ответ содержит ВСЕ записи семьи (запрос с since = 0). Тогда можно сверить обе стороны:
+// забрать то, чего нет у нас, и отправить заново то, что не дошло до сервера.
+function famMerge(r, full) {
   let ch = false;
   const my = myId();
   const mem = JSON.stringify(r.members || []);
@@ -1660,6 +1687,22 @@ function famMerge(r) {
     if (i >= 0) S.tx[i] = t; else S.tx.push(t);
     ch = true;
   }
+  if (full) ch = famReconcile(r) || ch;
+  return ch;
+}
+// Сверка: чего нет на сервере – отправляем заново, лишние отметки «общая» снимаем
+function famReconcile(r) {
+  let ch = false;
+  const my = myId(), onAcc = new Set((r.accounts || []).map(x => x.id)), onTx = new Set((r.tx || []).map(x => x.id));
+  S.accounts.forEach(a => {
+    if (a.sh && (!a.owner || a.owner === my) && !onAcc.has(a.id)) { famQueue({ k: 'acc', acc: accOut(a) }); ch = true; }
+  });
+  const sh = sharedSet();
+  S.tx.forEach(t => {
+    if (onTx.has(t.id)) return;
+    if (sh.has(t.a) || (t.a2 && sh.has(t.a2))) { t.sh = 1; t.by = t.by || my; famQueue({ k: 'tx', tx: txOut(t) }); ch = true; }
+    else if (t.sh) { delete t.sh; ch = true; }
+  });
   return ch;
 }
 function famDropLocal() {
@@ -1669,20 +1712,21 @@ function famDropLocal() {
   S.tx.forEach(t => { delete t.sh; });
   S.fam = null; S.outbox = [];
 }
-async function famSync() {
+async function famSync(force) {
   if (!famReady() || FAM.busy) return;
   FAM.busy = true;
-  let changed = false, sent = 0;
+  let changed = false, sent = 0, full = !!force || famFull;
   const hadErr = FAM.err;
   try {
     for (let loop = 0; loop < 40; loop++) {
       const ops = (S.outbox || []).slice(0, 30);
-      const r = await api('/sync', { since: S.fam.since || 0, ops });
+      const r = await api('/sync', { since: full ? 0 : (S.fam.since || 0), ops });
       S.outbox.splice(0, ops.length); sent += ops.length;
-      if (famMerge(r)) changed = true;
+      if (famMerge(r, full)) changed = true;
+      if (full) { full = false; famFull = false; }
       if (!S.outbox.length) break;
     }
-    FAM.err = '';
+    FAM.err = ''; FAM.at = Date.now();
   } catch (e) {
     FAM.err = e.message;
     if (e.message === 'not_member') { famDropLocal(); changed = true; toast('Вы больше не участник семьи – общие счета скрыты'); }
@@ -1700,10 +1744,14 @@ function famCard() {
       <button class="link" data-act="fam-create">${FAM.loading ? 'Создаю…' : '＋ Создать семью и пригласить'}</button><button class="link" data-act="fam-join-open">Присоединиться по коду</button>`;
   else {
     const ms = S.fam.members || [], shared = S.accounts.filter(a => a.sh), q = (S.outbox || []).length;
+    const cnt = a => S.tx.filter(t => t.a === a.id || t.a2 === a.id).length, val = valuesAt(today());
     body = ms.map(m => `<div class="row"><div class="ico">${m.uid === myId() ? '🙂' : '👤'}</div><div class="grow t">${esc(m.name)}${m.uid === myId() ? ' <span class="sub">– вы</span>' : ''}</div></div>`).join('')
-      + `<div class="sub" style="padding:10px 0 2px">${shared.length ? 'Общие счета: ' + shared.map(a => esc(a.name)).join(', ') + '.' : 'Общих счетов пока нет. Откройте счёт и включите «Общий семейный счёт».'}`
-      + `${q ? `<br>Ожидают отправки: ${q}` : ''}${FAM.err ? `<br><span class="exp">Ошибка синхронизации: ${esc(famErrText(FAM.err))}</span>` : ''}</div>`
-      + `<button class="link" data-act="fam-invite">＋ Пригласить участника</button><button class="link" data-act="fam-sync">${FAM.busy ? 'Синхронизирую…' : 'Синхронизировать сейчас'}</button><button class="link" data-act="fam-leave" style="color:var(--exp)">Покинуть семью</button>`;
+      + (shared.length
+          ? shared.map(a => `<div class="row"><div class="ico">${esc(a.icon || '💳')}</div><div class="grow"><div class="t">${esc(a.name)}</div><div class="sub">операций: ${cnt(a)} · владелец: ${esc(memberName(a.owner))}</div></div><div class="r num">${fmt(sgn(a) * (val[a.id] || 0), a.cur)}</div></div>`).join('')
+          : '<div class="sub" style="padding:10px 0 2px">Общих счетов пока нет. Откройте счёт и включите «Общий семейный счёт».</div>')
+      + `<div class="sub" style="padding:10px 0 2px">${FAM.err ? `<span class="exp">Ошибка синхронизации: ${esc(famErrText(FAM.err))}</span>` : FAM.at ? 'Синхронизировано: ' + new Date(FAM.at).toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : 'Синхронизация ещё не выполнялась'}${q ? `<br>Ожидают отправки: ${q}` : ''}`
+      + `<br>Если у вас и у второго участника суммы по общему счёту не совпадают, нажмите «Сверить данные» на обоих устройствах.</div>`
+      + `<button class="link" data-act="fam-invite">＋ Пригласить участника</button><button class="link" data-act="fam-check">${FAM.checking ? 'Сверяю…' : 'Сверить данные с сервером'}</button><button class="link" data-act="fam-sync">${FAM.busy ? 'Синхронизирую…' : 'Синхронизировать сейчас'}</button><button class="link" data-act="fam-leave" style="color:var(--exp)">Покинуть семью</button>`;
   }
   return `<div class="h1">Семейный бюджет</div><div class="card">${body}</div>`;
 }
@@ -1766,6 +1814,15 @@ Object.assign(ACT, {
     catch (e) { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); toast('Приглашение скопировано'); }
   },
   'fam-sync': async () => { await famSync(); toast(FAM.err ? famErrText(FAM.err) : 'Синхронизировано'); draw(); },
+  'fam-check': async () => {
+    if (FAM.checking) return;
+    FAM.checking = true; draw();
+    const before = S.tx.filter(t => t.sh).length;
+    await famSync(true); await famSync();
+    FAM.checking = false; render();
+    const after = S.tx.filter(t => t.sh).length, d = after - before;
+    toast(FAM.err ? famErrText(FAM.err) : d === 0 ? 'Данные совпадают с сервером' : d > 0 ? `Добавлено операций: ${d}` : `Убрано лишних операций: ${-d}`);
+  },
   'fam-leave': async () => {
     if (!(await ask('Покинуть семью? Общие счета других участников исчезнут из вашего приложения, а ваши общие счета снова станут личными.'))) return;
     try { await api('/family/leave'); } catch (e) { if (e.message !== 'not_member') return toast(famErrText(e.message)); }
@@ -1875,6 +1932,7 @@ Object.assign(ACT, {
 /* ================= Что нового ================= */
 // Список обновлений, новое – сверху. Показывается один раз после установки новой версии.
 const CHANGELOG = [
+  { v: '1.12', d: '25.09.2026', items: ['Исправлено: если телефон и компьютер сохраняли изменения в одну и ту же секунду, они могли навсегда разойтись и показывать разные суммы. Теперь такого не происходит.', 'Семейный бюджет: кнопка «Сверить данные с сервером». Если у вас и у второго участника суммы по общему счёту разошлись, она вернёт недостающие операции и уберёт лишние.', 'В настройках видно время последней синхронизации, а сбой синхронизации теперь показывается на главном экране.', 'Резервная копия: в имени файла и внутри него сохраняется время выгрузки, а в настройках видно, когда копия делалась в последний раз.'] },
   { v: '1.11', d: '23.09.2026', items: ['Приложение раз в сутки сообщает серверу, что было открыто: это нужно, чтобы автор видел, сколько людей им пользуются.', 'Передаются только дата, версия и общие признаки – содержимое ваших финансов не отправляется. Отключить: Настройки → Данные.'] },
   { v: '1.10', d: '22.09.2026', items: ['При первом входе появляется пошаговое обучение: девять коротких экранов по всем разделам.', 'Появилась полная инструкция: Настройки → О приложении → «Как пользоваться».'] },
   { v: '1.9.1', d: '22.09.2026', items: ['Появилось это окно: после каждого обновления коротко рассказываем, что изменилось.', 'Список изменений всегда доступен: Настройки → О приложении → Что нового.'] },
@@ -2002,8 +2060,9 @@ const GUIDE = [
       <p>Стоимость инвестиций обновляйте операцией «Переоценка» раз в месяц.</p>` },
   { t: 'Семейный бюджет', h: `<p>Настройки → Семейный бюджет → «Создать семью». Вы получите код, его нужно отправить супругу или супруге, они вводят его у себя.</p>
       <p>Затем откройте счёт, которым хотите делиться, и включите <b>«Общий семейный счёт»</b>.</p>
-      <p><b>Общими становятся только отмеченные счета.</b> Остальные ваши счета и операции по ним видите только вы. Изменения появляются у второго участника в течение 15 секунд.</p>` },
-  { t: 'Резервная копия', h: `<p>Настройки → Данные → «Сохранить копию данных». Бот пришлёт файл в чат, его можно там и оставить.</p>
+      <p><b>Общими становятся только отмеченные счета.</b> Остальные ваши счета и операции по ним видите только вы. Изменения появляются у второго участника в течение 15 секунд.</p>
+      <p>Если суммы по общему счёту у вас и у второго участника всё же разошлись, откройте Настройки → Семейный бюджет и нажмите <b>«Сверить данные с сервером»</b> на обоих устройствах. Приложение вернёт недостающие операции и уберёт лишние. Там же видно, сколько операций по каждому общему счёту сейчас у вас: эти числа у обоих участников должны совпадать.</p>` },
+  { t: 'Резервная копия', h: `<p>Настройки → Данные → «Сохранить копию данных». Бот пришлёт файл в чат, его можно там и оставить. В имени файла стоит дата и время выгрузки, поэтому копии за один день не перезаписывают друг друга, а в настройках видно, когда копия делалась в последний раз.</p>
       <p>Восстановление: «Восстановить из копии» → «Выбрать файл».</p>
       <p>Делайте копию раз в месяц и перед каждым обновлением. Данные хранятся на устройстве и в облаке Telegram, но копия защитит от любой случайности.</p>` },
   { t: 'Частые вопросы', h: `<p><b>Забыл записать трату.</b> Добавьте её задним числом: в форме есть поле даты. Или сделайте операцию «Остаток» – приложение само поправит разницу.</p>
